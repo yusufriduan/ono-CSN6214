@@ -9,14 +9,12 @@
 
 typedef struct {
     char name[NAME_SIZE];
-    // Add other player fields as needed
 } Player;
 
 int main() {
     char player_name[NAME_SIZE];
     printf("Enter your name: ");
     fgets(player_name, NAME_SIZE, stdin);
-    // Remove newline character
     player_name[strcspn(player_name, "\n")] = 0;
 
     int fd = open(JOIN_FIFO, O_WRONLY);
@@ -34,9 +32,6 @@ int main() {
 
 
     Player player;
-    // initialize_game(&player); // Uncomment if you have this function defined
-
-    // printf("Game starting with %d players!\n", num_players); // Uncomment if num_players is defined
     // Game logic would go here...
 
     return 0;
