@@ -76,9 +76,6 @@ void *logger_thread_func(void *arg) {
         fflush(fp); // Ensure it saves immediately
 
         if (strcmp(buffer, "SERVER_SHUTDOWN") == 0) break;
-
-        fprintf(fp, "%s\n", buffer);
-        fflush(fp);
     }
 
     fclose(fp);
