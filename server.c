@@ -162,7 +162,11 @@ int main() {
         fflush(stdout);
 
         if (i == 0 && (num_players > 2 || num_players < 6))
-            break;        
+            break;
+
+        if (num_players == 5)
+            break;
+            
         sleep(1);
     }
     close(join_fd);
