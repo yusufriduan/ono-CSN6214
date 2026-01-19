@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <errno.h>
 
 #define NAME_SIZE 50
 #define JOIN_FIFO "/tmp/join_fifo"
@@ -20,18 +21,41 @@ int main() {
 
     pid_t pid = getpid();
     snprintf(client_fifo, sizeof(client_fifo), "/tmp/client_%d", pid);
-    mkfifo(client_fifo, 0666); // Create the pipe
-
-    int fd = open(JOIN_FIFO, O_WRONLY);
-    if (fd == -1) {
-        perror("Unable to open join FIFO(Server might not be running)");
-        unlink(client_fifo);
+    
+    unlink(client_fifo);
+    if (mkfifo(client_fifo,0666) == -1) {
+        perror("Failed to create client pipe.");
         return 1;
+    }
+
+    int fd = -1;
+    printf("Looking for server...\n");
+
+    while (1) {
+        fd = open(JOIN_FIFO, O_WRONLY);
+
+        if (fd != -1) {
+            printf("\nConnected to the server...\n");
+            break;
+        }
+        else {
+            if (errno != ENOENT) {
+                perror("Unexpected error when connecting to server.");
+                unlink(client_fifo);
+                return 1;
+            }
+
+            printf("Server not ready yet. Waiting...\n");
+            fflush(stdout);
+            sleep(1);
+        }
     }
 
     snprintf(buffer, sizeof(buffer), "%d %s", pid, player_name);
     write(fd, buffer, strlen(buffer));
-    printf("Joined the game as %s\n", player_name);
+    close(fd);
+
+    printf("Request sent! Waiting for game to start...\n");
 
     int my_fd = open(client_fifo, O_RDONLY); // This BLOCKS until Server connects
     if (my_fd == -1) {
@@ -47,7 +71,7 @@ int main() {
         
         if (bytes_read > 0) {
             // Received data from server!
-            printf("Server says: %s\n", buffer);
+            printf("[Server]: %s\n", buffer);
             
             // Check for game over
             if (strstr(buffer, "GAME_OVER")) break;
@@ -61,6 +85,5 @@ int main() {
 
     close(my_fd);
     unlink(client_fifo); // Clean up the FIFO
-    close(fd);
     return 0;
 }

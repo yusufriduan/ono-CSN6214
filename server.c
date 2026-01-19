@@ -30,6 +30,7 @@ typedef struct {
 typedef struct {
     char cards;
     char names[5][NAME_SIZE];
+    int is_active;
     int current_player;
     int game_over;
 } Player;
@@ -80,6 +81,20 @@ void *logger_thread_func(void *arg) {
 
     fclose(fp);
     return NULL;
+}
+
+void handle_disconnect(int player_index, char *player_name, int fd) {
+    char log_msg[LOG_MSG_LEN];
+
+    snprintf(log_msg, LOG_MSG_LEN, "DISCONNECT: Player %s (Index %d) left.", player_name, player_index);
+    enqueue_log(log_msg);
+
+    if (fd != -1) {
+        close(fd);
+    }
+
+    printf("Player %s disconnected. Cleaning up child process...\n", player_name);
+    exit(0);
 }
 
 void initialize_game(Player *player) {
@@ -141,7 +156,7 @@ int main() {
                     snprintf(client_fifo, 64, "/tmp/client_%d", client_pid);
                     int c_fd = open(client_fifo, O_WRONLY);
                     if (c_fd != -1) {
-                        write(c_fd, "Welcome to the game!\n", 8);
+                        write(c_fd, "Welcome to the game!\n", 21);
                         close(c_fd);
                     }
                 }
