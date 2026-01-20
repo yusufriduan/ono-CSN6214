@@ -38,11 +38,18 @@ typedef struct {
 LogQueue logger;
 
 void enqueue_log(char *msg) {
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    char timed_msg[LOG_MSG_LEN];
+
+    int time_len = strftime(timed_msg, LOG_MSG_LEN, "[%H:%M:%S] ", t);
+    snprintf(timed_msg + time_len, LOG_MSG_LEN - time_len, "%s", msg);
+
     sem_wait(&logger.space_left);          // Wait for space
     pthread_mutex_lock(&logger.lock);      // Lock
     
     // Copy message
-    strncpy(logger.queue[logger.tail], msg, LOG_MSG_LEN - 1);
+    strncpy(logger.queue[logger.tail], timed_msg, LOG_MSG_LEN - 1);
     logger.queue[logger.tail][LOG_MSG_LEN - 1] = '\0';
     
     logger.tail = (logger.tail + 1) % LOG_QUEUE_SIZE; // Advance tail
