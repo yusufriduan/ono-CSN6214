@@ -11,6 +11,7 @@
 #define MAX_BUFFER 1024
 
 int main() {
+    // Server initialization
     char player_name[NAME_SIZE];
     char client_fifo[64];
     char buffer[MAX_BUFFER];
@@ -19,9 +20,11 @@ int main() {
     fgets(player_name, NAME_SIZE, stdin);
     player_name[strcspn(player_name, "\n")] = 0;
 
+    // Get the process ID for the piping procedure
     pid_t pid = getpid();
     snprintf(client_fifo, sizeof(client_fifo), "/tmp/client_%d", pid);
     
+    // If the piping exist, unlink
     unlink(client_fifo);
     if (mkfifo(client_fifo,0666) == -1) {
         perror("Failed to create client pipe.");
@@ -32,6 +35,7 @@ int main() {
     printf("Looking for server...\n");
 
     while (1) {
+        // CLient found server
         fd = open(JOIN_FIFO, O_WRONLY);
 
         if (fd != -1) {
@@ -45,6 +49,7 @@ int main() {
                 return 1;
             }
 
+            // Client could not find server
             printf("Server not ready yet. Waiting...\n");
             fflush(stdout);
             sleep(1);
@@ -55,13 +60,28 @@ int main() {
     write(fd, buffer, strlen(buffer));
     close(fd);
 
-    printf("Request sent! Waiting for game to start...\n");
+    printf("Request sent! Waiting for game to start...\n\n");
 
-    int my_fd = open(client_fifo, O_RDONLY); // This BLOCKS until Server connects
+    int my_fd = open(client_fifo, O_RDONLY); //This BLOCKS until Server connects
     if (my_fd == -1) {
         perror("Unable to open client FIFO");
         close(fd);
         unlink(client_fifo);
+        return 1;
+    }
+
+    char server_fifo[64];
+    snprintf(server_fifo, sizeof(server_fifo), "/tmp/client_%d_in", pid);
+
+    unlink(server_fifo);
+    if(mkfifo(server_fifo, 0666) == -1){
+        perror("Failed to create server input pipe");
+        return 1;
+    }
+
+    int write_fd = open(server_fifo, O_WRONLY);
+    if(write_fd == -1){
+        perror("Failed to connect to server input");
         return 1;
     }
     
@@ -83,7 +103,9 @@ int main() {
         }
     }
 
+    close(write_fd);
+    unlink(server_fifo);
     close(my_fd);
-    unlink(client_fifo); // Clean up the FIFO
+    unlink(client_fifo);
     return 0;
 }
