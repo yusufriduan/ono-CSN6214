@@ -18,38 +18,49 @@
 
 typedef struct {
     char queue[LOG_QUEUE_SIZE][LOG_MSG_LEN];
-    int head; // Where the Logger Thread reads from
-    int tail; // Where Child Processes write to
+    int head; 
+    int tail;
     
-    // Synchronization primitives
-    sem_t count;         // Counts how many messages are waiting (Start at 0)
-    sem_t space_left;    // Counts how much space is left (Start at LOG_QUEUE_SIZE)
-    pthread_mutex_t lock; // Protects the indices (head/tail)
+    // semaphore function (mostly for logging)
+    sem_t count;
+    sem_t space_left;
+    pthread_mutex_t lock;
 } LogQueue;
 
 typedef struct {
     char cards;
     char names[5][NAME_SIZE];
+    int is_active;
     int current_player;
     int game_over;
 } Player;
 
 LogQueue logger;
 
+
+// Pass logging mechanism
 void enqueue_log(char *msg) {
-    sem_wait(&logger.space_left);          // Wait for space
-    pthread_mutex_lock(&logger.lock);      // Lock
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    char timed_msg[LOG_MSG_LEN];
+
+    int time_len = strftime(timed_msg, LOG_MSG_LEN, "[%H:%M:%S] ", t);
+    snprintf(timed_msg + time_len, LOG_MSG_LEN - time_len, "%s", msg);
+
+    sem_wait(&logger.space_left);
+    pthread_mutex_lock(&logger.lock);    
     
-    // Copy message
-    strncpy(logger.queue[logger.tail], msg, LOG_MSG_LEN - 1);
+    strncpy(logger.queue[logger.tail], timed_msg, LOG_MSG_LEN - 1);
     logger.queue[logger.tail][LOG_MSG_LEN - 1] = '\0';
     
-    logger.tail = (logger.tail + 1) % LOG_QUEUE_SIZE; // Advance tail
+    logger.tail = (logger.tail + 1) % LOG_QUEUE_SIZE;
     
-    pthread_mutex_unlock(&logger.lock);    // Unlock
-    sem_post(&logger.count);               // Wake up logger thread
+    pthread_mutex_unlock(&logger.lock);
+    sem_post(&logger.count);
 }
 
+
+// THE ACTUAL THREAD LOGGING
 void *logger_thread_func(void *arg) {
     LogQueue *lq = (LogQueue *)arg;
 
@@ -82,6 +93,22 @@ void *logger_thread_func(void *arg) {
     return NULL;
 }
 
+// If player disconnect
+void handle_disconnect(int player_index, char *player_name, int fd) {
+    char log_msg[LOG_MSG_LEN];
+
+    snprintf(log_msg, LOG_MSG_LEN, "DISCONNECT: Player %s (Index %d) left.", player_name, player_index);
+    enqueue_log(log_msg);
+
+    if (fd != -1) {
+        close(fd);
+    }
+
+    printf("Player %s disconnected. Cleaning up child process...\n", player_name);
+    exit(0);
+}
+
+// Game starts (Haven't started on this one yet)
 void initialize_game(Player *player) {
     player->cards = START_CARD_DECK;
     for (int i = 0; i < 5; i++) {
@@ -95,6 +122,7 @@ int main() {
     int num_players = 0;
     int countdown = 60;
     char player_names[5][NAME_SIZE];
+    int client_pid_list[5];
     char player_name[NAME_SIZE];
     char raw_buffer[128];
 
@@ -131,6 +159,7 @@ int main() {
             if (sscanf(raw_buffer, "%d %49[^\n]", &client_pid, player_name) == 2) {
                 if (num_players < 5) {
                     strncpy(player_names[num_players], player_name, NAME_SIZE);
+                    client_pid_list[num_players] = client_pid;
                     num_players++;
                     
                     char log_msg[LOG_MSG_LEN];
@@ -141,7 +170,7 @@ int main() {
                     snprintf(client_fifo, 64, "/tmp/client_%d", client_pid);
                     int c_fd = open(client_fifo, O_WRONLY);
                     if (c_fd != -1) {
-                        write(c_fd, "Welcome to the game!\n", 8);
+                        write(c_fd, "Welcome to the game!\n", 21);
                         close(c_fd);
                     }
                 }
@@ -170,16 +199,47 @@ int main() {
     unlink(JOIN_FIFO);
 
     printf("\033[2J\033[H");
+    fflush(stdout);
 
-    if (num_players > 2 || num_players < 6) {
+    if (num_players > 1 && num_players < 6) {
         printf("Game starting with %d players!\n", num_players);
         for (int i = 0; i < num_players; i++) {
-            printf("Player %s\n", player_names[i]);
+            printf("Player %s\n", player_names[i]); // and then followed with line 213 for loop
         }
     } else {    
         fprintf(stderr, "Number of players must be between 3 and 5.\n");
         return 1;
     }
+
+    for (int i=0; i < num_players; i++) {
+        pid_t pid = fork();
+
+        if (pid == 0) {
+            char client_fifo[64];
+            snprintf(client_fifo, 64, "/tmp/client_%d_in", client_pid_list[i]);
+
+            int player_fd = open(client_fifo, O_RDONLY);
+
+            if(player_fd == -1){
+                perror("Child failed to open player input pipe");
+                exit(1);
+            }
+
+            while (1) {
+                char buffer[1024];
+                int n = read(player_fd, buffer, sizeof(buffer));
+
+                if (n > 0) {
+                    // Process Game Move [ELSA PART]
+                } else if (n == 0) 
+                    handle_disconnect(i, player_names[i], player_fd);
+            }
+            exit(0);
+        }
+    }
+
+    // PARENT PROCESS continues here...
+    // Round Robin Scheduler [ELSA PART]
 
     enqueue_log("Server shutting down.");
     pthread_join(log_tid, NULL);
