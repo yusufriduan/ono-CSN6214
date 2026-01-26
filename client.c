@@ -5,10 +5,104 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <stdint.h>
+#include <stdbool.h>
 
 #define NAME_SIZE 50
 #define JOIN_FIFO "/tmp/join_fifo"
 #define MAX_BUFFER 1024
+#ifndef CARD
+#define CARD
+
+//Cards
+typedef enum cardColor {
+    CARD_COLOUR_RED = 0,
+    CARD_COLOUR_BLUE = 1,
+    CARD_COLOUR_GREEN = 2,
+    CARD_COLOUR_YELLOW = 3,
+    CARD_COLOUR_BLACK = 4 // Wild Cards
+} cardColour;
+
+typedef enum cardValue {
+    CARD_VALUE_NONE = -1,
+    CARD_VALUE_0 = 0,
+    CARD_VALUE_1 = 1,
+    CARD_VALUE_2 = 2,
+    CARD_VALUE_3 = 3,
+    CARD_VALUE_4 = 4,
+    CARD_VALUE_5 = 5,
+    CARD_VALUE_6 = 6,
+    CARD_VALUE_7 = 7,
+    CARD_VALUE_8 = 8,
+    CARD_VALUE_9 = 9,
+    CARD_VALUE_SKIP = 10,
+    CARD_VALUE_REVERSE = 11,
+    CARD_VALUE_DRAW_TWO = 12,
+    CARD_VALUE_WILD = 13,
+    CARD_VALUE_WILD_DRAW_FOUR = 14
+} cardValue;
+
+typedef enum cardType {
+    CARD_NUMBER_TYPE = 0,
+    CARD_SKIP_TYPE = 1,
+    CARD_REVERSE_TYPE = 2,
+    CARD_DRAW_TWO_TYPE = 3,
+    CARD_WILD_TYPE = 4,
+    CARD_WILD_DRAW_FOUR_TYPE = 5
+} cardType;
+
+typedef struct Card {
+    cardColour colour;
+    cardType type;
+    cardValue value;
+} Card;
+
+bool card_IsPlayable(const Card* card, const Card* top_card){
+
+    //Card is playable when
+    //1. Same value as top card
+    //2. Same colour as top card
+    //3. The card is a wild card5
+    //4. Same card type as top card
+
+    //Check if same value
+    if((card->value != CARD_VALUE_NONE && top_card->value != CARD_VALUE_NONE) && card->value == top_card->value){
+        return true;
+    }
+
+    //Check for same colour
+    else if(card->colour == top_card->colour || card->colour == CARD_COLOUR_BLACK){
+        return true;
+    }
+
+    //Check for same card type
+    else if((card->type != CARD_NUMBER_TYPE && top_card->type != CARD_NUMBER_TYPE) && card->type == top_card->type){
+        return true;
+    }
+
+    //Check for wild cards
+    else if(card->colour == CARD_COLOUR_BLACK || card->type == CARD_WILD_TYPE){
+        return true;
+    }
+
+    else{
+        return false;
+    }
+
+}
+#endif // CARD
+
+#ifndef DECK
+#define DECK
+
+//4 cards of each colour, of each type (+4 is 8 copies)
+Card onoDeck[220] = {};
+
+void deckShuffle(Card* onoDeck){
+    onoDeck[1];
+}
+
+#endif //DECK
 
 int main() {
     // Server initialization
