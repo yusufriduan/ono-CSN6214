@@ -20,7 +20,6 @@ typedef struct {
     char queue[LOG_QUEUE_SIZE][LOG_MSG_LEN];
     int head; 
     int tail;
-    
     // semaphore function (mostly for logging)
     sem_t count;
     sem_t space_left;
@@ -187,7 +186,7 @@ int main() {
             printf(" - %s\n", player_names[p]);
         fflush(stdout);
 
-        if (i == 0 && (num_players > 2 || num_players < 6))
+        if (i == 0 && (num_players > 1 || num_players < 6))
             break;
 
         if (num_players == 5)
@@ -207,7 +206,7 @@ int main() {
             printf("Player %s\n", player_names[i]); // and then followed with line 213 for loop
         }
     } else {    
-        fprintf(stderr, "Number of players must be between 3 and 5.\n");
+        fprintf(stderr, "Number of players must be between 2 and 5.\n");
         return 1;
     }
 
