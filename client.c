@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <time.h>
 
 #define NAME_SIZE 50
 #define JOIN_FIFO "/tmp/join_fifo"
@@ -95,11 +96,102 @@ bool card_IsPlayable(const Card* card, const Card* top_card){
 #ifndef DECK
 #define DECK
 
+#define DECK_SIZE 220
 //4 cards of each colour, of each type (+4 is 8 copies)
-Card onoDeck[220] = {};
+typedef struct deck{
+    Card deckCards[DECK_SIZE];
+    uint8_t top_index;
+} Deck;
+int w;
 
-void deckShuffle(Card* onoDeck){
-    onoDeck[1];
+void deckInit(Deck* onoDeck){
+    uint8_t top_index = 0;
+    
+    //Adding coloured cards into the deck
+    for(int i = 0; i < 4; i++){
+        
+        //Number cards (0-9)
+        for(int j = 0; i < 9; i++){
+    
+            //Creating 4 copies of the number card
+            for(int k = 0; k < 4; k++){
+                onoDeck->deckCards[top_index++] = (Card){
+                    .colour = (cardColour)i,
+                    .type = CARD_NUMBER_TYPE,
+                    .value = (uint8_t)j
+                };
+            }
+        }
+
+        //Power cards (Skip [10], Reverse[11], Draw Two[12])        
+        for(int j = 10; i < 13; i++){
+            //Ensuring the card is given its correct cardType
+            switch(j){
+                case 10:
+                        w = 1;
+                        break;
+                case 11:
+                        w = 2;
+                        break;
+                case 12:
+                        w = 3;
+                        break;
+            }
+            //Creating 4 copies of the power cards
+            for(int k = 1; k < 4; k++){
+                onoDeck->deckCards[top_index++] = (Card){
+                    .colour = (cardColour)i,
+                    .type = (cardType)w,
+                    .value = (uint8_t)j
+                };
+            }
+        }
+    }
+
+    //4 Wild Cards
+    for(int l = 0; l < 4; l++){
+        onoDeck->deckCards[top_index++] = (Card){
+            .colour = CARD_COLOUR_BLACK,
+            .type = CARD_WILD_TYPE,
+            .value = CARD_VALUE_WILD
+        };
+    }
+
+    //8 Wild Card Draw Fours
+    for(int m = 0; m < 8; m++){
+        onoDeck->deckCards[top_index++] = (Card){
+            .colour = CARD_COLOUR_BLACK,
+            .type = CARD_WILD_DRAW_FOUR_TYPE,
+            .value = CARD_VALUE_WILD_DRAW_FOUR
+        };
+    }
+
+    //Ensure pointer is now at top card
+    onoDeck->top_index = 0;
+}
+
+void deckShuffle(Deck* onoDeck){
+    //Random Number Generator Seed
+    unsigned int seed = (unsigned int)time(NULL);
+
+    for(int i = DECK_SIZE - 1; i > 0; i--){
+
+        int j = (int)((double)rand_r(&seed) / (i+1) * (i+1)); // Generate Random Number between 0 to DECK_SIZE (220)
+
+        Card temp = onoDeck->deckCards[i];
+        onoDeck->deckCards[i] = onoDeck->deckCards[j];
+        onoDeck->deckCards[j] = temp;
+    }
+}
+
+void deckDraw(Deck* onoDeck){
+    
+    if(onoDeck->top_index >= DECK_SIZE){
+        onoDeck->top_index = 0;
+        deckShuffle(onoDeck);
+    }
+
+    return(onoDeck->deckCards[onoDeck->top_index++]);
 }
 
 #endif //DECK
@@ -109,7 +201,7 @@ int main() {
     char player_name[NAME_SIZE];
     char client_fifo[64];
     char buffer[MAX_BUFFER];
-     
+
     printf("Enter your name: ");
     fgets(player_name, NAME_SIZE, stdin);
     player_name[strcspn(player_name, "\n")] = 0;
