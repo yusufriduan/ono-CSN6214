@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <semaphore.h>
 #include <pthread.h>
+#include <sys/mman.h>
 
 #define LOG_QUEUE_SIZE 50
 #define LOG_MSG_LEN 100
@@ -34,7 +35,19 @@ typedef struct {
     int game_over;
 } Player;
 
-LogQueue logger;
+typedef struct {
+  Player players[5];
+  LogQueue logger;
+  int num_players;
+  int current_player;
+  int winner_pid; // 0 = No winner determined
+  int direction; // 1 = Clockwise | 1 == Anti-clockwise
+
+  // Sync prmitives for the Game State
+  pthread_mutex_t game_lock;
+  pthread_cond_t turn_cond;
+} GameState;
+GameState *shm;
 
 
 // Pass logging mechanism
@@ -46,16 +59,16 @@ void enqueue_log(char *msg) {
     int time_len = strftime(timed_msg, LOG_MSG_LEN, "[%H:%M:%S] ", t);
     snprintf(timed_msg + time_len, LOG_MSG_LEN - time_len, "%s", msg);
 
-    sem_wait(&logger.space_left);
-    pthread_mutex_lock(&logger.lock);    
+    sem_wait(&shm->logger.space_left);
+    pthread_mutex_lock(&shm->logger.lock);    
     
-    strncpy(logger.queue[logger.tail], timed_msg, LOG_MSG_LEN - 1);
-    logger.queue[logger.tail][LOG_MSG_LEN - 1] = '\0';
+    strncpy(shm->logger.queue[shm->logger.tail], timed_msg, LOG_MSG_LEN - 1);
+    shm->logger.queue[shm->logger.tail][LOG_MSG_LEN - 1] = '\0';
     
-    logger.tail = (logger.tail + 1) % LOG_QUEUE_SIZE;
+    shm->logger.tail = (shm->logger.tail + 1) % LOG_QUEUE_SIZE;
     
-    pthread_mutex_unlock(&logger.lock);
-    sem_post(&logger.count);
+    pthread_mutex_unlock(&shm->logger.lock);
+    sem_post(&shm->logger.count);
 }
 
 
@@ -107,16 +120,7 @@ void handle_disconnect(int player_index, char *player_name, int fd) {
     exit(0);
 }
 
-// Game starts (Haven't started on this one yet)
-void initialize_game(Player *player) {
-    player->cards = START_CARD_DECK;
-    for (int i = 0; i < 5; i++) {
-        snprintf(player->names[i], NAME_SIZE, "Player%d", i + 1);
-    }
-    player->current_player = 0;
-    player->game_over = 0;
-}
-
+// Game starts
 int main() {
     int num_players = 0;
     int countdown = 60;
@@ -125,12 +129,31 @@ int main() {
     char player_name[NAME_SIZE];
     char raw_buffer[128];
 
-    sem_init(&logger.count, 0, 0); 
-    sem_init(&logger.space_left, 0, LOG_QUEUE_SIZE);
-    pthread_mutex_init(&logger.lock, NULL);
+    shm = mmap(NULL, sizeof(GameState), PROT_READ | PROT_WRITE,
+              MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+
+    if(shm == MAP_FAILED) {
+      perror("mmap failed");
+      return 1;
+    }
+
+    // Initialize Sync Premitives in Shared Memory
+    sem_init(&shm->logger.count, 1, 0); 
+    sem_init(&shm->logger.space_left, 1, LOG_QUEUE_SIZE);
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED);
+    pthread_mutex_init(&shm->logger.lock, &attr);
+
+    pthread_mutex_init(&shm->game_lock, &attr);
+
+    pthread_condattr_t cattr;
+    pthread_condattr_init(&cattr);
+    pthread_condattr_setpshared(&cattr, PTHREAD_PROCESS_SHARED);
+    pthread_cond_init(&shm->turn_cond, &cattr);
 
     pthread_t log_tid;
-    pthread_create(&log_tid, NULL, logger_thread_func, (void *)&logger);
+    pthread_create(&log_tid, NULL, logger_thread_func, (void *)&shm->logger);
 
     unlink(JOIN_FIFO); // Remove any existing FIFO
     if (mkfifo(JOIN_FIFO, 0666) == -1) {
@@ -154,7 +177,7 @@ int main() {
         if (n > 0) {
             raw_buffer[n] = '\0';
 
-            int client_pid;
+          int client_pid;
             if (sscanf(raw_buffer, "%d %49[^\n]", &client_pid, player_name) == 2) {
                 if (num_players < 5) {
                     strncpy(player_names[num_players], player_name, NAME_SIZE);
@@ -205,40 +228,40 @@ int main() {
         for (int i = 0; i < num_players; i++) {
             printf("Player %s\n", player_names[i]); // and then followed with line 213 for loop
         }
+
+        for (int i=0; i < num_players; i++) {
+            pid_t pid = fork();
+
+            if (pid == 0) {
+                char client_fifo[64];
+                snprintf(client_fifo, 64, "/tmp/client_%d_in", client_pid_list[i]);
+
+                int player_fd = open(client_fifo, O_RDONLY);
+
+                if(player_fd == -1){
+                    perror("Child failed to open player input pipe");
+                    exit(1);
+                }
+
+                while (1) {
+                    char buffer[1024];
+                    int n = read(player_fd, buffer, sizeof(buffer));
+
+                    if (n > 0) {
+                        // Process Game Move, Determine winner [ELSA PART]
+                    } else if (n == 0) {
+                        handle_disconnect(i, player_names[i], player_fd);
+                    }
+                }
+                exit(0);
+            }
+        }
+
+        // Round Robin Scheduler, Parent Process [ELSA PART]
     } else {    
         fprintf(stderr, "Number of players must be between 2 and 5.\n");
         return 1;
     }
-
-    for (int i=0; i < num_players; i++) {
-        pid_t pid = fork();
-
-        if (pid == 0) {
-            char client_fifo[64];
-            snprintf(client_fifo, 64, "/tmp/client_%d_in", client_pid_list[i]);
-
-            int player_fd = open(client_fifo, O_RDONLY);
-
-            if(player_fd == -1){
-                perror("Child failed to open player input pipe");
-                exit(1);
-            }
-
-            while (1) {
-                char buffer[1024];
-                int n = read(player_fd, buffer, sizeof(buffer));
-
-                if (n > 0) {
-                    // Process Game Move [ELSA PART]
-                } else if (n == 0) 
-                    handle_disconnect(i, player_names[i], player_fd);
-            }
-            exit(0);
-        }
-    }
-
-    // PARENT PROCESS continues here...
-    // Round Robin Scheduler [ELSA PART]
 
     enqueue_log("Server shutting down.");
     pthread_join(log_tid, NULL);

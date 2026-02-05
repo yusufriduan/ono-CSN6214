@@ -221,6 +221,9 @@ int w;
 
 #endif
 
+int is_turn_msg(const char *msg){
+    return (strstr(msg, "TURN") != NULL) || (strstr(msg, "Your turn") != NULL);
+}
 
 
 int main() {
@@ -269,7 +272,7 @@ int main() {
         }
     }
 
-    snprintf(buffer, sizeof(buffer), "%d %s", pid, player_name);
+    snprintf(buffer, sizeof(buffer), "%d %s\n", pid, player_name);
     write(fd, buffer, strlen(buffer));
     close(fd);
 
@@ -308,6 +311,43 @@ int main() {
             
             // Check for game over
             if (strstr(buffer, "GAME_OVER")) break;
+
+            if (is_turn_msg(buffer)){
+
+                char move[128];
+
+                printf("Your move (move <something> / draw / quit): ");
+                fflush(stdout);
+
+                if (fgets(move, sizeof(move), stdin) == NULL){
+                    break;
+                }
+                move[strcspn(move, "\n")] = 0;
+
+                //quit
+                if(strcmp(move, "quit") == 0 || strcmp(move, "q") == 0){
+                    write(write_fd, "QUIT\n", 5);
+                    break;
+                }
+
+                //draw
+                if (strcmp(move, "draw") == 0){
+                    write(write_fd, "DRAW\n", 5);
+                }
+                else {
+                    // move
+                    char out[180];
+
+                    if (strncmp(move, "move", 5) == 0){
+                        snprintf(out, sizeof(out), "MOVE %s\n", move + 5);
+                    }
+                    else {
+                        snprintf(out, sizeof(out), "MOVE %s\n", move);
+                    }   
+
+                    write(write_fd, out, strlen(out));
+                }
+            }
             
             // TODO: Add logic here to let user play a card if it's their turn
         } else if (bytes_read == 0) {
