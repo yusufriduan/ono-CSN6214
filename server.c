@@ -21,7 +21,6 @@ typedef struct {
     char queue[LOG_QUEUE_SIZE][LOG_MSG_LEN];
     int head; 
     int tail;
-
     // semaphore function (mostly for logging)
     sem_t count;
     sem_t space_left;
