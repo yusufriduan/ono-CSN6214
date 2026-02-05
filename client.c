@@ -111,7 +111,7 @@ void deckInit(Deck* onoDeck){
     for(int i = 0; i < 4; i++){
         
         //Number cards (0-9)
-        for(int j = 0; i < 9; i++){
+        for(int j = 0; i < 10; i++){
     
             //Creating 4 copies of the number card
             for(int k = 0; k < 4; k++){
@@ -182,6 +182,11 @@ void deckShuffle(Deck* onoDeck){
         onoDeck->deckCards[i] = onoDeck->deckCards[j];
         onoDeck->deckCards[j] = temp;
     }
+
+    uint8_t top_index = 0;
+    while((onoDeck->deckCards[top_index].type != CARD_NUMBER_TYPE)){
+        deckShuffle(onoDeck);
+    }
 }
 
 void deckDraw(Deck* onoDeck){
@@ -195,6 +200,22 @@ void deckDraw(Deck* onoDeck){
 }
 
 #endif //DECK
+
+
+//Syed Zaki
+#ifndef GAME
+#define GAME
+
+
+#endif //GAME
+
+//Jason
+#ifndef PLAYER_HAND
+#define PLAYER_HAND
+
+#endif
+
+
 
 int main() {
     // Server initialization
