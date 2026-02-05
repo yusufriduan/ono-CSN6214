@@ -213,6 +213,12 @@ void deckDraw(Deck* onoDeck){
 #ifndef PLAYER_HAND
 #define PLAYER_HAND
 
+typedef struct playerHand{
+    Card deckCards[DECK_SIZE];
+    uint8_t top_index;
+} Deck;
+int w;
+
 #endif
 
 
