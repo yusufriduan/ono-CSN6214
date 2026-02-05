@@ -6,6 +6,7 @@
 #include <ctype.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <fcntl.h>
 #include <semaphore.h>
 #include <pthread.h>
@@ -29,10 +30,9 @@ typedef struct {
 
 typedef struct {
     char cards;
-    char names[5][NAME_SIZE];
+    char name[NAME_SIZE];
+    pid_t pid;
     int is_active;
-    int current_player;
-    int game_over;
 } Player;
 
 typedef struct {
@@ -126,7 +126,6 @@ int main() {
     int countdown = 60;
     char player_names[5][NAME_SIZE];
     int client_pid_list[5];
-    char player_name[NAME_SIZE];
     char raw_buffer[128];
 
     shm = mmap(NULL, sizeof(GameState), PROT_READ | PROT_WRITE,
@@ -176,26 +175,37 @@ int main() {
         int n = read(join_fd, raw_buffer, sizeof(raw_buffer)-1);
         if (n > 0) {
             raw_buffer[n] = '\0';
+            char *line = strtok(raw_buffer, "\n");
 
-          int client_pid;
-            if (sscanf(raw_buffer, "%d %49[^\n]", &client_pid, player_name) == 2) {
-                if (num_players < 5) {
-                    strncpy(player_names[num_players], player_name, NAME_SIZE);
-                    client_pid_list[num_players] = client_pid;
-                    num_players++;
-                    
-                    char log_msg[LOG_MSG_LEN];
-                    snprintf(log_msg, LOG_MSG_LEN, "Player joined: %s (PID: %d)", player_name, client_pid);
-                    enqueue_log(log_msg);
-                    
-                    char client_fifo[64];
-                    snprintf(client_fifo, 64, "/tmp/client_%d", client_pid);
-                    int c_fd = open(client_fifo, O_WRONLY);
-                    if (c_fd != -1) {
-                        write(c_fd, "Welcome to the game!\n", 21);
-                        close(c_fd);
+            while (line != NULL) {
+                int client_pid;
+                char temp_name[NAME_SIZE];
+                if (sscanf(line, "%d %49[^\n]", &client_pid, temp_name) == 2) {
+                    if (num_players < 5) {
+                        strncpy(player_names[num_players], temp_name, NAME_SIZE);
+                        client_pid_list[num_players] = client_pid;
+
+                        strncpy(shm->players[num_players].name, temp_name, NAME_SIZE);
+                        shm->players[num_players].pid = client_pid;
+                        shm->players[num_players].is_active = 1;
+                        shm->players[num_players].cards = START_CARD_DECK;
+                        num_players++;
+                        shm->num_players = num_players;
+                        
+                        char log_msg[LOG_MSG_LEN];
+                        snprintf(log_msg, LOG_MSG_LEN, "Player joined: %s (PID: %d)", temp_name, client_pid);
+                        enqueue_log(log_msg);
+                        
+                        char client_fifo[64];
+                        snprintf(client_fifo, 64, "/tmp/client_%d", client_pid);
+                        int c_fd = open(client_fifo, O_WRONLY);
+                        if (c_fd != -1) {
+                            write(c_fd, "Welcome to the game!\n", 21);
+                            close(c_fd);
+                        }
                     }
                 }
+                line = strtok(NULL, "\n");
             }
         }
 
