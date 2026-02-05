@@ -189,7 +189,7 @@ void deckShuffle(Deck* onoDeck){
     }
 }
 
-void deckDraw(Deck* onoDeck){
+Card deckDraw(Deck* onoDeck){
     
     if(onoDeck->top_index >= DECK_SIZE){
         onoDeck->top_index = 0;
