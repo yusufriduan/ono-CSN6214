@@ -194,6 +194,17 @@ void deckShuffle(Deck* onoDeck){
     }
 }
 
+const char* get_colour_name(cardColour c) {
+    switch(c) {
+        case CARD_COLOUR_RED: return "Red";
+        case CARD_COLOUR_BLUE: return "Blue";
+        case CARD_COLOUR_GREEN: return "Green";
+        case CARD_COLOUR_YELLOW: return "Yellow";
+        case CARD_COLOUR_BLACK: return "Wild";
+        default: return "Unknown";
+    }
+}
+
 Card deckDraw(Deck* onoDeck){
     
     if(onoDeck->top_index >= DECK_SIZE){
@@ -205,26 +216,6 @@ Card deckDraw(Deck* onoDeck){
 }
 
 #endif //DECK
-
-
-//Syed Zaki
-#ifndef GAME
-#define GAME
-#define MAX_PLAYERS 6
-
-typedef struct game{
-    Deck deck;
-    Player players[MAX_PLAYERS];
-    Card played_cards[DECK_SIZE];
-    uint8_t current_card, max_players;
-} game;
-
-//For when a player plays a power card/wild card
-void execute_card_effect(){
-
-}
-
-#endif //GAME
 
 //Jason
 #ifndef PLAYER
@@ -254,12 +245,15 @@ void player_add_card(Player* player,Card new_card){
 void player_play_card(Player* player, uint8_t card_played, Card* played_cards, uint8_t current_card){
     while(!playable_card(&player->hand_cards[card_played], &played_cards[current_card])){
         printf("Card %d is not a playable card, please pick another card", card_played);
-        scanf(card_played);
+        int temp_input;
+        scanf("%d", &temp_input);
+        card_played = (uint8_t)temp_input;
         player_play_card(player, card_played, played_cards, current_card);
+        return;
     }
     played_cards[sizeof(played_cards)] = player->hand_cards[player->hand_size - 1];
     player->hand_size--;
-    printf("A %d(%s) has been played!", played_cards[sizeof(played_cards)].value, played_cards[sizeof(played_cards)].colour);
+    printf("A %d(%s) has been played!", played_cards[sizeof(played_cards)].value, get_colour_name(played_cards[sizeof(played_cards)].colour));
 }
 
 //For displaying the Player's hand
@@ -268,9 +262,29 @@ int player_check_hand(Player* player){
         Card hand_card = player->hand_cards[i];
         display_card(&hand_card);
     }
+    return 0;
 }
 
 #endif
+
+//Syed Zaki
+#ifndef GAME
+#define GAME
+#define MAX_PLAYERS 6
+
+typedef struct game{
+    Deck deck;
+    Player players[MAX_PLAYERS];
+    Card played_cards[DECK_SIZE];
+    uint8_t current_card, max_players;
+} game;
+
+//For when a player plays a power card/wild card
+void execute_card_effect(){
+
+}
+
+#endif //GAME
 
 int is_turn_msg(const char *msg){
     return (strstr(msg, "TURN") != NULL) || (strstr(msg, "Your turn") != NULL);
