@@ -189,7 +189,7 @@ void deckShuffle(Deck* onoDeck){
     }
 }
 
-void deckDraw(Deck* onoDeck){
+Card deckDraw(Deck* onoDeck){
     
     if(onoDeck->top_index >= DECK_SIZE){
         onoDeck->top_index = 0;
@@ -212,6 +212,12 @@ void deckDraw(Deck* onoDeck){
 //Jason
 #ifndef PLAYER_HAND
 #define PLAYER_HAND
+
+typedef struct playerHand{
+    Card deckCards[DECK_SIZE];
+    uint8_t top_index;
+} Deck;
+int w;
 
 #endif
 
