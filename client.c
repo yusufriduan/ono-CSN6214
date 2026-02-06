@@ -289,7 +289,7 @@ void player_init(Player *player, const char *name)
 
 void player_play_card(Player *player, uint8_t card_played, Game *game)
 {
-    while (!playable_card(&player->hand_cards[card_played], game->played_cards[game->current_card]))
+    while (!playable_card(&player->hand_cards[card_played], &game->played_cards[game->current_card]))
     {
         printf("> Card %d is not a playable card, please pick another card", card_played);
         int temp_input;
@@ -315,6 +315,17 @@ int player_check_hand(Player *player)
     return 0;
 }
 
+Card deckDraw(Deck *onoDeck)
+{
+    if (onoDeck->top_index >= DECK_SIZE)
+    {
+        onoDeck->top_index = 0;
+        deckShuffle(onoDeck);
+    }
+
+    return onoDeck->deckCards[onoDeck->top_index++];
+}
+
 void player_turn(Player *player, Game *game)
 {
     int selected_card = 0;
@@ -332,7 +343,7 @@ void player_turn(Player *player, Game *game)
     if (selected_card == 0)
     {
         printf("> You draw a card...");
-        Card card_drawn = deckDraw(game->deck);
+        Card card_drawn = deckDraw(&game->deck);
         player_add_card(player, card_drawn);
     }
     else

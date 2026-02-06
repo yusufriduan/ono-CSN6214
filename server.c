@@ -196,6 +196,45 @@ void deckInit(Deck *onoDeck)
     onoDeck->top_index = 0;
 }
 
+bool playable_card(Card *card, Game* game)
+{
+    // Card is playable when
+    // 1. Same value as top card
+    // 2. Same colour as top card
+    // 3. The card is a wild card5
+    // 4. Same card type as top card
+
+
+    // Check if same value
+    if ((card->value != CARD_VALUE_NONE && game->played_cards[game->current_card].value != CARD_VALUE_NONE) && card->value == game->played_cards[game->current_card].value)
+    {
+        return true;
+    }
+
+    // Check for same colour
+    else if (card->colour == &game->played_cards[game->current_card].colour || &game->played_cards[game->current_card].colour == CARD_COLOUR_BLACK)
+    {
+        return true;
+    }
+
+    // Check for same card type
+    else if ((card->type != CARD_NUMBER_TYPE && game->played_cards[game->current_card].type != CARD_NUMBER_TYPE) && card->type == &game->played_cards[game->current_card].type)
+    {
+        return true;
+    }
+
+    // Check for wild cards
+    else if (card->type == CARD_WILD_TYPE)
+    {
+        return true;
+    }
+
+    else
+    {
+        return false;
+    }
+}
+
 void deckShuffle(Deck *onoDeck)
 {
     // Random Number Generator Seed
@@ -227,16 +266,37 @@ const char *get_colour_name(cardColour c)
     }
 }
 
-// To-do: Add Reshuffling deck
-Card deckDraw(Deck *onoDeck)
+void player_play_card(Player *player, uint8_t card_played, Game *game)
 {
-    if (onoDeck->top_index >= DECK_SIZE)
+    while (!playable_card(&player->hand_cards[card_played], &game->played_cards[game->current_card]))
     {
-        onoDeck->top_index = 0;
-        deckShuffle(onoDeck);
+        printf("> Card %d is not a playable card, please pick another card", card_played);
+        int temp_input;
+        scanf("%d", &temp_input);
+        card_played = (uint8_t)temp_input;
+        player_play_card(player, card_played, game);
+        return;
+    }
+    game->played_cards[++game->current_card] = player->hand_cards[player->hand_size - 1];
+    player->hand_size--;
+    printf("> A %d(%s) has been played!", game->played_cards[game->current_card].value, get_colour_name(&game->played_cards[game->current_card]));
+    execute_card_effect(&game->played_cards[game->current_card], game);
+}
+
+Card deckDraw(Game* game)
+{
+    if (game->deck.deckCards[game->deck.top_index] >= DECK_SIZE)
+    {
+        game->deck.top_index = 0;
+        deckShuffle(&game->deck);
     }
 
-    return onoDeck->deckCards[onoDeck->top_index++];
+    //In the case the drawn card is playable, automatically play it
+    if(playable_card(&game->deck.deckCards[game->deck.top_index], game)){
+        player_play_card(&shm->players[game->current_player], game->deck.top_index, game);
+        return (Card){.value = CARD_VALUE_NONE, .colour = CARD_COLOUR_BLACK, .type = CARD_NUMBER_TYPE};
+    }
+    return game->deck.deckCards[game->deck.top_index++];
 }
 
 void player_add_card(Player *player, Card new_card)
