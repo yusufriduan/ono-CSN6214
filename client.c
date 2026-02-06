@@ -12,6 +12,12 @@
 #define NAME_SIZE 50
 #define JOIN_FIFO "/tmp/join_fifo"
 #define MAX_BUFFER 1024
+
+typedef struct game Game;
+typedef struct player Player;
+typedef struct deck Deck;
+typedef struct Card Card;
+
 #ifndef CARD
 #define CARD
 
