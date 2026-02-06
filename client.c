@@ -58,7 +58,12 @@ typedef struct Card {
     cardValue value;
 } Card;
 
-bool card_IsPlayable(const Card* card, const Card* top_card){
+//For displaying cards
+void display_card(Card* card){
+
+}
+
+bool playable_card(Card* card, Card* top_card){
 
     //Card is playable when
     //1. Same value as top card
@@ -189,7 +194,18 @@ void deckShuffle(Deck* onoDeck){
     }
 }
 
-void deckDraw(Deck* onoDeck){
+const char* get_colour_name(cardColour c) {
+    switch(c) {
+        case CARD_COLOUR_RED: return "Red";
+        case CARD_COLOUR_BLUE: return "Blue";
+        case CARD_COLOUR_GREEN: return "Green";
+        case CARD_COLOUR_YELLOW: return "Yellow";
+        case CARD_COLOUR_BLACK: return "Wild";
+        default: return "Unknown";
+    }
+}
+
+Card deckDraw(Deck* onoDeck){
     
     if(onoDeck->top_index >= DECK_SIZE){
         onoDeck->top_index = 0;
@@ -201,20 +217,78 @@ void deckDraw(Deck* onoDeck){
 
 #endif //DECK
 
+//Jason
+#ifndef PLAYER
+#define PLAYER
+
+#define MAX_HAND_SIZE 64
+
+typedef struct player{
+    char player_name[NAME_SIZE];
+    Card hand_cards[MAX_HAND_SIZE];
+    uint8_t hand_size;
+} Player;
+
+void player_init(Player* player, const char* name){
+    strncpy(player->player_name, name, NAME_SIZE - 1); //copy the name given into the player itself
+    player->hand_size = 0; //Cards given during start of round
+
+}
+
+void player_add_card(Player* player,Card new_card){
+    if(player->hand_size < MAX_HAND_SIZE){
+        player->hand_size++;
+        player->hand_cards[player->hand_size] = new_card;
+    }
+}
+
+void player_play_card(Player* player, uint8_t card_played, Card* played_cards, uint8_t current_card){
+    while(!playable_card(&player->hand_cards[card_played], &played_cards[current_card])){
+        printf("Card %d is not a playable card, please pick another card", card_played);
+        int temp_input;
+        scanf("%d", &temp_input);
+        card_played = (uint8_t)temp_input;
+        player_play_card(player, card_played, played_cards, current_card);
+        return;
+    }
+    played_cards[sizeof(played_cards)] = player->hand_cards[player->hand_size - 1];
+    player->hand_size--;
+    printf("A %d(%s) has been played!", played_cards[sizeof(played_cards)].value, get_colour_name(played_cards[sizeof(played_cards)].colour));
+}
+
+//For displaying the Player's hand
+int player_check_hand(Player* player){
+    for(int i = 0; i < player->hand_size - 1; i++){
+        Card hand_card = player->hand_cards[i];
+        display_card(&hand_card);
+    }
+    return 0;
+}
+
+#endif
 
 //Syed Zaki
 #ifndef GAME
 #define GAME
+#define MAX_PLAYERS 6
 
+typedef struct game{
+    Deck deck;
+    Player players[MAX_PLAYERS];
+    Card played_cards[DECK_SIZE];
+    uint8_t current_card, max_players;
+} game;
+
+//For when a player plays a power card/wild card
+void execute_card_effect(){
+
+}
 
 #endif //GAME
 
-//Jason
-#ifndef PLAYER_HAND
-#define PLAYER_HAND
-
-#endif
-
+int is_turn_msg(const char *msg){
+    return (strstr(msg, "TURN") != NULL) || (strstr(msg, "Your turn") != NULL);
+}
 
 
 int main() {
@@ -263,7 +337,7 @@ int main() {
         }
     }
 
-    snprintf(buffer, sizeof(buffer), "%d %s", pid, player_name);
+    snprintf(buffer, sizeof(buffer), "%d %s\n", pid, player_name);
     write(fd, buffer, strlen(buffer));
     close(fd);
 
@@ -302,6 +376,43 @@ int main() {
             
             // Check for game over
             if (strstr(buffer, "GAME_OVER")) break;
+
+            if (is_turn_msg(buffer)){
+
+                char move[128];
+
+                printf("Your move (move <something> / draw / quit): ");
+                fflush(stdout);
+
+                if (fgets(move, sizeof(move), stdin) == NULL){
+                    break;
+                }
+                move[strcspn(move, "\n")] = 0;
+
+                //quit
+                if(strcmp(move, "quit") == 0 || strcmp(move, "q") == 0){
+                    write(write_fd, "QUIT\n", 5);
+                    break;
+                }
+
+                //draw
+                if (strcmp(move, "draw") == 0){
+                    write(write_fd, "DRAW\n", 5);
+                }
+                else {
+                    // move
+                    char out[180];
+
+                    if (strncmp(move, "move", 5) == 0){
+                        snprintf(out, sizeof(out), "MOVE %s\n", move + 5);
+                    }
+                    else {
+                        snprintf(out, sizeof(out), "MOVE %s\n", move);
+                    }   
+
+                    write(write_fd, out, strlen(out));
+                }
+            }
             
             // TODO: Add logic here to let user play a card if it's their turn
         } else if (bytes_read == 0) {
