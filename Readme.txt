@@ -12,7 +12,7 @@ Option A: Using Make (Recommended)
    $ make
 
 Option B: Manual Compilation
-   If you do not have the Makefile ready, compile the server and client separately:
+   You could compile the server and client separately:
    
    $ gcc -pthread -o server server.c
    $ gcc -o client client.c
