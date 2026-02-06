@@ -285,18 +285,20 @@ void player_play_card(Player *player, uint8_t card_played, Game *game)
 
 Card deckDraw(Game* game)
 {
-    if (game->deck.deckCards[game->deck.top_index] >= DECK_SIZE)
+    if (game->deck.top_index >= DECK_SIZE)
     {
         game->deck.top_index = 0;
         deckShuffle(&game->deck);
     }
 
+    Card drawn_card = game->deck.deckCards[game->deck.top_index++];
+
     //In the case the drawn card is playable, automatically play it
-    if(playable_card(&game->deck.deckCards[game->deck.top_index], game)){
-        player_play_card(&shm->players[game->current_player], game->deck.top_index, game);
+    if(playable_card(&drawn_card, game)){
+        player_play_card(&game->players[game->current_player], game->deck.top_index - 1, game);
         return (Card){.value = CARD_VALUE_NONE, .colour = CARD_COLOUR_BLACK, .type = CARD_NUMBER_TYPE};
     }
-    return game->deck.deckCards[game->deck.top_index++];
+    return drawn_card;
 }
 
 void player_add_card(Player *player, Card new_card)
