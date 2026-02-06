@@ -554,9 +554,8 @@ int main()
         return 1;
     }
 
-    int write_fd = open(server_fifo, O_WRONLY);
-    if (write_fd == -1)
-    {
+    int write_fd = open(server_fifo, O_WRONLY | O_NONBLOCK);
+    if(write_fd == -1){
         perror("Failed to connect to server input");
         return 1;
     }
@@ -564,10 +563,10 @@ int main()
     while (1)
     {
         memset(buffer, 0, sizeof(buffer));
-        int bytes_read = read(my_fd, buffer, sizeof(buffer));
-
-        if (bytes_read > 0)
-        {
+        int bytes_read = read(my_fd, buffer, sizeof(buffer) - 1);
+        buffer[bytes_read] = '\0';
+        
+        if (bytes_read > 0) {
             // Received data from server!
             printf("[Server]: %s\n", buffer);
 
@@ -618,11 +617,8 @@ int main()
                     write(write_fd, out, strlen(out));
                 }
             }
-
-            // TODO: Add logic here to let user play a card if it's their turn
-        }
-        else if (bytes_read == 0)
-        {
+        } 
+        else if (bytes_read == 0) {
             printf("Server disconnected.\n");
             break;
         }
