@@ -206,7 +206,7 @@ bool playable_card(Card *card, Game* game)
 
 
     // Check if same value
-    if ((card->value != CARD_VALUE_NONE && game->played_cards[game->current_card].value != CARD_VALUE_NONE) && card->value == game->played_cards[game->current_card].value)
+    if ((card->value != CARD_VALUE_NONE && game->played_cards[game->current_card].value != CARD_VALUE_NONE) && card->value == &game->played_cards[game->current_card].value)
     {
         return true;
     }
@@ -218,7 +218,7 @@ bool playable_card(Card *card, Game* game)
     }
 
     // Check for same card type
-    else if ((card->type != CARD_NUMBER_TYPE && game->played_cards[game->current_card].type != CARD_NUMBER_TYPE) && card->type == &game->played_cards[game->current_card].type)
+    else if ((card->type != CARD_NUMBER_TYPE && &game->played_cards[game->current_card].type != CARD_NUMBER_TYPE) && card->type == &game->played_cards[game->current_card].type)
     {
         return true;
     }
@@ -279,7 +279,7 @@ void player_play_card(Player *player, uint8_t card_played, Game *game)
     }
     game->played_cards[++game->current_card] = player->hand_cards[player->hand_size - 1];
     player->hand_size--;
-    printf("> A %d(%s) has been played!", game->played_cards[game->current_card].value, get_colour_name(&game->played_cards[game->current_card]));
+    printf("> A %d(%s) has been played!", game->played_cards[game->current_card].value, get_colour_name(&game->played_cards[game->current_card].colour));
     execute_card_effect(&game->played_cards[game->current_card], game);
 }
 
