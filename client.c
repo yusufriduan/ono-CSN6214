@@ -8,12 +8,96 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <time.h>
-#include "server.c"
 
 
 #define NAME_SIZE 50
 #define JOIN_FIFO "/tmp/join_fifo"
 #define MAX_BUFFER 1024
+#define MAX_HAND_SIZE 64
+#define DECK_SIZE 220
+#define MAX_PLAYERS 6
+
+typedef struct game
+{
+    Deck deck;
+    Player players[MAX_PLAYERS];
+    Card played_cards[DECK_SIZE];
+    GameDirection gameFlow;
+    uint8_t current_card, current_player, next_player, winner;
+    bool decided_winner;
+} Game;
+
+typedef struct deck
+{
+    Card deckCards[DECK_SIZE];
+    uint8_t top_index;
+} Deck;
+
+typedef enum GameDirection
+{
+    GAME_DIRECTION_NONE = 0,
+    GAME_DIRECTION_LEFT = -1,
+    GAME_DIRECTION_RIGHT = 1
+} GameDirection;
+
+void check_for_uno(Player *player, Game *game)
+{   
+    char declared_uno[3];
+    if(player->hand_size == 1){
+        printf("> You are about to win! Type 'Uno' or draw two cards: ");
+        scanf("%s", declared_uno);
+
+        if(declared_uno != "uno"){
+            printf("> Uh oh! You didn't say Uno! You'll now draw two cards!");
+            player->hand_cards[player->hand_size++] = deckDraw(&game->deck);
+            player->hand_cards[player->hand_size++] = deckDraw(&game->deck);
+        }
+        else{
+            printf("> Player %d has declared uno!", game->current_player);
+        }
+    }
+}
+
+void gameplay(Game *game)
+{
+    while (!game->decided_winner)
+    {
+        player_turn(&game->players[game->current_player], game);
+        game->decided_winner = (&game->players[game->current_player], game);
+        decide_next_player(game);
+    }
+    printf("{ %s WINS! }\n\n", game->players[game->winner].player_name);
+}
+
+void game_init(Game *game)
+{
+    deckInit(&game->deck);
+    game->gameFlow = 1;
+    game->current_player = 0;
+    game->current_card = 0;
+    game->next_player = game->current_player + game->gameFlow;
+
+    // Give out 7 cards to each player
+    for (int i = 0; i < MAX_PLAYERS; i++)
+    {
+        for (int j = 0; j < 7; j++)
+        {
+            player_add_card(&game->players[i], deckDraw(&game->deck));
+        }
+    }
+
+    // Play the starting card
+    game->played_cards[0] = deckDraw(&game->deck);
+    while ((game->played_cards[0].type != CARD_NUMBER_TYPE))
+    {
+        deckShuffle(&game->deck);
+        game->played_cards[0] = deckDraw(&game->deck);
+    }
+    game->current_card = 1;
+
+    gameplay(game);
+}
+
 #ifndef CARD
 #define CARD
 
@@ -68,27 +152,27 @@ typedef struct Card
 
 bool playable_card(Card *card, Game* game)
 {
-
     // Card is playable when
     // 1. Same value as top card
     // 2. Same colour as top card
     // 3. The card is a wild card5
     // 4. Same card type as top card
 
+
     // Check if same value
-    if ((card->value != CARD_VALUE_NONE && game->played_cards[game->current_card].value != CARD_VALUE_NONE) && card->value == game->played_cards[game->current_card]->value)
+    if ((card->value != CARD_VALUE_NONE && game->played_cards[game->current_card].value != CARD_VALUE_NONE) && card->value == game->played_cards[game->current_card].value)
     {
         return true;
     }
 
     // Check for same colour
-    else if (card->colour == game->played_cards[game->current_card]->colour || game->played_cards[game->current_card]->colour == CARD_COLOUR_BLACK)
+    else if (card->colour == &game->played_cards[game->current_card].colour || &game->played_cards[game->current_card].colour == CARD_COLOUR_BLACK)
     {
         return true;
     }
 
     // Check for same card type
-    else if ((card->type != CARD_NUMBER_TYPE && game->played_cards[game->current_card].type != CARD_NUMBER_TYPE) && card->type == game->played_cards[game->current_card]->type)
+    else if ((card->type != CARD_NUMBER_TYPE && game->played_cards[game->current_card].type != CARD_NUMBER_TYPE) && card->type == &game->played_cards[game->current_card].type)
     {
         return true;
     }
@@ -110,6 +194,79 @@ void display_card(Card *card)
     printf("[%s (%s)]", card->value, get_colour_name(card->colour));
 }
 
+void execute_reverse_card(Game *game)
+{
+    switch (game->gameFlow)
+    {
+    case 1:
+        game->gameFlow = -1;
+        break;
+    case -1:
+        game->gameFlow = 1;
+        break;
+    default:
+        game->gameFlow = 1;
+    }
+}
+
+void execute_skip_card(Game *game)
+{
+    game->current_player+= game->gameFlow;
+    game->next_player+= game->gameFlow;
+}
+
+void execute_draw_two_card(Game *game)
+{
+    game->players[game->next_player].hand_cards[game->players[game->next_player].hand_size++] = deckDraw(&game->deck);
+    game->players[game->next_player].hand_cards[game->players[game->next_player].hand_size++] = deckDraw(&game->deck);
+}
+
+void execute_wild_card(Game *game)
+{
+    uint8_t chosen_colour;
+    printf("> Choose a colour, 1: Red, 2: Blue, 3: Green, 4: Yellow: ");
+    scanf("%hhu", &chosen_colour);
+    switch(chosen_colour){
+        case 1: game->played_cards[game->current_card].colour = CARD_COLOUR_RED; break;
+        case 2: game->played_cards[game->current_card].colour = CARD_COLOUR_BLUE; break;
+        case 3: game->played_cards[game->current_card].colour = CARD_COLOUR_GREEN; break;
+        case 4: game->played_cards[game->current_card].colour = CARD_COLOUR_YELLOW; break;
+        default: printf("Unknown colour picked");
+    }
+}
+
+void execute_wild_card_draw_four(Game *game)
+{
+    execute_wild_card(game);
+    for(int i = 0; i < 4; i++)
+        game->players[game->next_player].hand_cards[game->players[game->next_player].hand_size++] = deckDraw(&game->deck);
+}
+
+// For when a player plays a power card/wild card
+void execute_card_effect(Card *c, Game *game)
+{
+    switch (c->value)
+    {
+    case CARD_VALUE_SKIP:
+        execute_skip_card(game);
+        break;
+    case CARD_VALUE_REVERSE:
+        execute_reverse_card(game);
+        break;
+    case CARD_VALUE_DRAW_TWO:
+        execute_draw_two_card(game);
+        break;
+    case CARD_VALUE_WILD:
+        execute_wild_card(game);
+        break;
+    case CARD_VALUE_WILD_DRAW_FOUR:
+        execute_wild_card_draw_four(game);
+        break;
+    default:
+        break;
+    }
+}
+
 #endif // CARD
 
 // Jason
@@ -128,15 +285,6 @@ void player_init(Player *player, const char *name)
 {
     strncpy(player->player_name, name, NAME_SIZE - 1); // copy the name given into the player itself
     player->hand_size = 0;                             // Cards given during start of round
-}
-
-void player_add_card(Player *player, Card new_card)
-{
-    if (player->hand_size < MAX_HAND_SIZE)
-    {
-        player->hand_cards[player->hand_size] = new_card;
-        player->hand_size++;
-    }
 }
 
 void player_play_card(Player *player, uint8_t card_played, Game *game)
@@ -184,7 +332,7 @@ void player_turn(Player *player, Game *game)
     if (selected_card == 0)
     {
         printf("> You draw a card...");
-        Card card_drawn = deckDraw(&game->deck);
+        Card card_drawn = deckDraw(game->deck);
         player_add_card(player, card_drawn);
     }
     else
@@ -203,8 +351,8 @@ int is_turn_msg(const char *msg)
     return (strstr(msg, "TURN") != NULL) || (strstr(msg, "Your turn") != NULL);
 }
 
-int main()
-{
+
+int main() {
     // Server initialization
     char player_name[NAME_SIZE];
     char client_fifo[64];
@@ -280,9 +428,8 @@ int main()
         return 1;
     }
 
-    int write_fd = open(server_fifo, O_WRONLY);
-    if (write_fd == -1)
-    {
+    int write_fd = open(server_fifo, O_WRONLY | O_NONBLOCK);
+    if(write_fd == -1){
         perror("Failed to connect to server input");
         return 1;
     }
@@ -290,10 +437,10 @@ int main()
     while (1)
     {
         memset(buffer, 0, sizeof(buffer));
-        int bytes_read = read(my_fd, buffer, sizeof(buffer));
-
-        if (bytes_read > 0)
-        {
+        int bytes_read = read(my_fd, buffer, sizeof(buffer) - 1);
+        buffer[bytes_read] = '\0';
+        
+        if (bytes_read > 0) {
             // Received data from server!
             printf("[Server]: %s\n", buffer);
 
@@ -344,11 +491,8 @@ int main()
                     write(write_fd, out, strlen(out));
                 }
             }
-
-            // TODO: Add logic here to let user play a card if it's their turn
-        }
-        else if (bytes_read == 0)
-        {
+        } 
+        else if (bytes_read == 0) {
             printf("Server disconnected.\n");
             break;
         }

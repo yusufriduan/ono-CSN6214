@@ -11,12 +11,92 @@
 #include <semaphore.h>
 #include <pthread.h>
 #include <sys/mman.h>
+#include <stdint.h>
+#include <stdbool.h>
 
 #define LOG_QUEUE_SIZE 50
 #define LOG_MSG_LEN 100
 #define NAME_SIZE 50
 #define START_CARD_DECK 8
 #define JOIN_FIFO "/tmp/join_fifo"
+#define MAX_HAND_SIZE 64
+#define DECK_SIZE 220
+#define MAX_PLAYERS 6
+
+typedef enum cardColor {
+    CARD_COLOUR_RED = 0,
+    CARD_COLOUR_BLUE = 1,
+    CARD_COLOUR_GREEN = 2,
+    CARD_COLOUR_YELLOW = 3,
+    CARD_COLOUR_BLACK = 4 
+} cardColour;
+
+typedef enum cardType {
+    CARD_NUMBER_TYPE = 0,
+    CARD_SKIP_TYPE = 1,
+    CARD_REVERSE_TYPE = 2,
+    CARD_DRAW_TWO_TYPE = 3,
+    CARD_WILD_TYPE = 4,
+    CARD_WILD_DRAW_FOUR_TYPE = 5
+} cardType;
+
+typedef enum cardValue {
+    CARD_VALUE_NONE = -1,
+    CARD_VALUE_0 = 0,
+    CARD_VALUE_1 = 1,
+    CARD_VALUE_2 = 2,
+    CARD_VALUE_3 = 3,
+    CARD_VALUE_4 = 4,
+    CARD_VALUE_5 = 5,
+    CARD_VALUE_6 = 6,
+    CARD_VALUE_7 = 7,
+    CARD_VALUE_8 = 8,
+    CARD_VALUE_9 = 9,
+    CARD_VALUE_SKIP = 10,
+    CARD_VALUE_REVERSE = 11,
+    CARD_VALUE_DRAW_TWO = 12,
+    CARD_VALUE_WILD = 13,
+    CARD_VALUE_WILD_DRAW_FOUR = 14
+} cardValue;
+
+typedef struct {
+  cardColour colour;
+  cardType type;
+  cardValue value;
+} Card;
+
+// 4 cards of each colour, of each type (+4 is 8 copies)
+typedef struct deck
+{
+    Card deckCards[DECK_SIZE];
+    uint8_t top_index;
+} Deck;
+int w;
+
+typedef struct {
+    char player_name[NAME_SIZE];
+    pid_t pid;
+    int is_active;
+    Card hand_cards[MAX_HAND_SIZE];
+    uint8_t hand_size;
+} Player;
+
+typedef enum GameDirection
+{
+    GAME_DIRECTION_NONE = 0,
+    GAME_DIRECTION_LEFT = -1,
+    GAME_DIRECTION_RIGHT = 1
+} GameDirection;
+
+typedef struct game
+{
+    Deck deck;
+    Player players[MAX_PLAYERS];
+    Card played_cards[DECK_SIZE];
+    GameDirection gameFlow;
+    uint8_t current_card, current_player, next_player, winner;
+    bool decided_winner;
+} Game;
 
 typedef struct {
     char queue[LOG_QUEUE_SIZE][LOG_MSG_LEN];
@@ -28,20 +108,19 @@ typedef struct {
     pthread_mutex_t lock;
 } LogQueue;
 
-typedef struct {
-    char cards;
-    char name[NAME_SIZE];
-    pid_t pid;
-    int is_active;
-} Player;
 
 typedef struct {
-  Player players[5];
+  Deck deck;
+  Player players[MAX_PLAYERS];
+  Card played_cards[DECK_SIZE];
+  uint8_t current_card_idx;
+
   LogQueue logger;
   int num_players;
   int current_player;
   int winner_pid; // 0 = No winner determined
   int direction; // 1 = Clockwise | 1 == Anti-clockwise
+  int game_over;
 
   // Sync prmitives for the Game State
   pthread_mutex_t game_lock;
@@ -49,275 +128,22 @@ typedef struct {
 } GameState;
 GameState *shm;
 
-
-// Pass logging mechanism
-void enqueue_log(char *msg) {
-    time_t now = time(NULL);
-    struct tm *t = localtime(&now);
-    char timed_msg[LOG_MSG_LEN];
-
-    int time_len = strftime(timed_msg, LOG_MSG_LEN, "[%H:%M:%S] ", t);
-    snprintf(timed_msg + time_len, LOG_MSG_LEN - time_len, "%s", msg);
-
-    sem_wait(&shm->logger.space_left);
-    pthread_mutex_lock(&shm->logger.lock);    
-    
-    strncpy(shm->logger.queue[shm->logger.tail], timed_msg, LOG_MSG_LEN - 1);
-    shm->logger.queue[shm->logger.tail][LOG_MSG_LEN - 1] = '\0';
-    
-    shm->logger.tail = (shm->logger.tail + 1) % LOG_QUEUE_SIZE;
-    
-    pthread_mutex_unlock(&shm->logger.lock);
-    sem_post(&shm->logger.count);
-}
-
-
-// THE ACTUAL THREAD LOGGING
-void *logger_thread_func(void *arg) {
-    LogQueue *lq = (LogQueue *)arg;
-
-    FILE *fp = fopen("game_log", "a");
-    if (!fp) {
-        perror("Logger failed to open file");
-        pthread_exit(NULL);
-    }
-
-    while (1) {
-        sem_wait(&lq->count);
-
-        pthread_mutex_lock(&lq->lock);
-
-        char buffer[LOG_MSG_LEN];
-        strcpy(buffer, lq->queue[lq->head]);
-
-        lq->head = (lq->head + 1) % LOG_QUEUE_SIZE;
-
-        pthread_mutex_unlock(&lq->lock);
-        sem_post(&lq->space_left);
-
-        fprintf(fp, "%s\n", buffer);
-        fflush(fp); // Ensure it saves immediately
-
-        if (strcmp(buffer, "SERVER_SHUTDOWN") == 0) break;
-    }
-
-    fclose(fp);
-    return NULL;
-}
-
-// If player disconnect
-void handle_disconnect(int player_index, char *player_name, int fd) {
-    char log_msg[LOG_MSG_LEN];
-
-    snprintf(log_msg, LOG_MSG_LEN, "DISCONNECT: Player %s (Index %d) left.", player_name, player_index);
-    enqueue_log(log_msg);
-
-    if (fd != -1) {
-        close(fd);
-    }
-
-    printf("Player %s disconnected. Cleaning up child process...\n", player_name);
-    shm->players[player_index].is_active = 0;
-    exit(0);
-}
-
-// Game starts
-int main() {
-    int num_players = 0;
-    int countdown = 60;
-    char player_names[5][NAME_SIZE];
-    int client_pid_list[5];
-    char raw_buffer[128];
-
-    int player_pipes[5];
-    for (int i=0; i<5; i++)
-        player_pipes[i] = -1;
-
-    shm = mmap(NULL, sizeof(GameState), PROT_READ | PROT_WRITE,
-              MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-
-    if(shm == MAP_FAILED) {
-      perror("mmap failed");
-      return 1;
-    }
-
-    // Initialize Sync Premitives in Shared Memory
-    sem_init(&shm->logger.count, 1, 0); 
-    sem_init(&shm->logger.space_left, 1, LOG_QUEUE_SIZE);
-    pthread_mutexattr_t attr;
-    pthread_mutexattr_init(&attr);
-    pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED);
-    pthread_mutex_init(&shm->logger.lock, &attr);
-
-    pthread_mutex_init(&shm->game_lock, &attr);
-
-    pthread_condattr_t cattr;
-    pthread_condattr_init(&cattr);
-    pthread_condattr_setpshared(&cattr, PTHREAD_PROCESS_SHARED);
-    pthread_cond_init(&shm->turn_cond, &cattr);
-
-    pthread_t log_tid;
-    pthread_create(&log_tid, NULL, logger_thread_func, (void *)&shm->logger);
-
-    unlink(JOIN_FIFO); // Remove any existing FIFO
-    if (mkfifo(JOIN_FIFO, 0666) == -1) {
-        perror("Failed to create join FIFO");
-        enqueue_log("Failed to create join FIFO");
-        return 1;
-    }
-
-    int join_fd = open(JOIN_FIFO, O_RDONLY | O_NONBLOCK);
-    if (join_fd == -1) {
-        perror("Failed to open join FIFO");
-        enqueue_log("Failed to open join FIFO");
-        unlink(JOIN_FIFO);
-        return 1;
-    }
-
-    enqueue_log("Server started, waiting for players to join.");
-
-    for (int i = countdown; i > 0; i--) { 
-        int n = read(join_fd, raw_buffer, sizeof(raw_buffer)-1);
-        if (n > 0) {
-            raw_buffer[n] = '\0';
-            char *line = strtok(raw_buffer, "\n");
-
-            while (line != NULL) {
-                int client_pid;
-                char temp_name[NAME_SIZE];
-                if (sscanf(line, "%d %49[^\n]", &client_pid, temp_name) == 2) {
-                    if (num_players < 5) {
-                        strncpy(player_names[num_players], temp_name, NAME_SIZE);
-                        client_pid_list[num_players] = client_pid;
-
-                        strncpy(shm->players[num_players].name, temp_name, NAME_SIZE);
-                        shm->players[num_players].pid = client_pid;
-                        shm->players[num_players].is_active = 1;
-                        shm->players[num_players].cards = START_CARD_DECK;
-
-                        char log_msg[LOG_MSG_LEN];
-                        snprintf(log_msg, LOG_MSG_LEN, "Player joined: %s (PID: %d)", temp_name, client_pid);
-                        enqueue_log(log_msg);
-                        
-                        char client_fifo[64];
-                        snprintf(client_fifo, 64, "/tmp/client_%d", client_pid);
-                        int c_fd = open(client_fifo, O_WRONLY);
-                        if (c_fd != -1) {
-                            write(c_fd, "Welcome to the game!\n", 21);
-                            player_pipes[num_players] = c_fd;
-                        }
-
-                        num_players++;
-                        shm->num_players = num_players;
-                    }
-                }
-                line = strtok(NULL, "\n");
-            }
-        }
-
-        printf("\033[2J\033[H"); // Clear Screen and move cursor to top
-        printf("Initiated Server Client of Ono Card Ono Game\n");
-        printf("Waiting for players to join...\n");
-        printf("Current players: %d\n", num_players);
-        printf("Time left to join: %d seconds\n", i - 1);
-        printf("Players:\n");
-        for(int p=0; p<num_players; p++)
-            printf(" - %s\n", player_names[p]);
-        fflush(stdout);
-
-        if (i == 0 && (num_players > 1 || num_players < 6))
-            break;
-
-        if (num_players == 5)
-            break;
-            
-        sleep(1);
-    }
-    close(join_fd);
-    unlink(JOIN_FIFO);
-
-    printf("\033[2J\033[H");
-    fflush(stdout);
-
-    if (num_players > 1 && num_players < 6) {
-        printf("Game starting with %d players!\n", num_players);
-        for (int i = 0; i < num_players; i++) {
-            printf("Player %s\n", player_names[i]); // and then followed with line 213 for loop
-        }
-
-        for (int i=0; i < num_players; i++) {
-            pid_t pid = fork();
-
-            if (pid == 0) {
-                char client_in_fifo[64];
-                snprintf(client_in_fifo, 64, "/tmp/client_%d_in", client_pid_list[i]);
-                int player_fd = open(client_in_fifo, O_RDONLY);
-                if(player_fd == -1){
-                    perror("Child failed to open player input pipe");
-                    exit(1);
-                }
-
-                while (1) {
-                    char buffer[1024];
-                    int n = read(player_fd, buffer, sizeof(buffer));
-
-                    if (n > 0) {
-                        // Process Game Move, Determine winner [ELSA PART]
-                    } else if (n == 0) {
-                        handle_disconnect(i, player_names[i], player_fd);
-                    }
-                }
-                exit(0);
-            } else {
-                if (player_pipes[i] != -1)
-                    close(player_pipes[i]);
-            }            
-        }
-
-        // Round Robin Scheduler, Parent Process [ELSA PART]
-
-        enqueue_log("Server shutting down.");
-    } else {    
-        fprintf(stderr, "Number of players must be between 2 and 5.\n");
-        return 1;
-    }
-
-    pthread_join(log_tid, NULL);
-    return 0;
-}
-
-//Deck
-#ifndef DECK
-#define DECK
-
-#define DECK_SIZE 220
-// 4 cards of each colour, of each type (+4 is 8 copies)
-typedef struct deck
-{
-    Card deckCards[DECK_SIZE];
-    uint8_t top_index;
-} Deck;
-int w;
-
 void deckInit(Deck *onoDeck)
 {
     uint8_t top_index = 0;
-
+    int w = 0;
     // Adding coloured cards into the deck
     for (int i = 0; i < 4; i++)
     {
-
         // Number cards (0-9)
         for (int j = 0; j < 10; i++)
         {
-
-            // Creating 4 copies of the number card
-            for (int k = 0; k < 4; k++)
-            {
-                onoDeck->deckCards[top_index++] = (Card){
-                    .colour = (cardColour)i,
-                    .type = CARD_NUMBER_TYPE,
-                    .value = (uint8_t)j};
+          // Creating 4 copies of the number card
+          for (int k = 0; k < 4; k++) {
+            onoDeck->deckCards[top_index++] = (Card){
+              .colour = (cardColour)i,
+              .type = CARD_NUMBER_TYPE,
+              .value = (uint8_t)j};
             }
         }
 
@@ -413,55 +239,25 @@ Card deckDraw(Deck *onoDeck)
     return onoDeck->deckCards[onoDeck->top_index++];
 }
 
-#endif // DECK
-
-//GAME
-#ifndef GAME
-#define GAME
-#define MAX_PLAYERS 6
-
-typedef enum GameDirection
+void player_add_card(Player *player, Card new_card)
 {
-    GAME_DIRECTION_NONE = 0,
-    GAME_DIRECTION_LEFT = -1,
-    GAME_DIRECTION_RIGHT = 1
-} GameDirection;
-
-typedef struct game
-{
-    Deck deck;
-    Player players[MAX_PLAYERS];
-    Card played_cards[DECK_SIZE];
-    GameDirection gameFlow;
-    uint8_t current_card, current_player, next_player, winner;
-    bool decided_winner;
-} Game;
+    if (player->hand_size < MAX_HAND_SIZE)
+    {
+        player->hand_cards[player->hand_size] = new_card;
+        player->hand_size++;
+    }
+}
 
 bool check_for_winner(Player *player, Game *game)
 {
     if(player->hand_size == 0){
-        game->winner = game->current_player;
-        return 1;
+        shm->winner_pid = player->pid;
+        shm->game_over = 1;
+        return true;
     }
+  return false;
 }
 
-void check_for_uno(Player *player, Game *game)
-{   
-    char declared_uno[3];
-    if(player->hand_size == 1){
-        printf("> You are about to win! Type 'Uno' or draw two cards: ");
-        scanf("%s", declared_uno);
-
-        if(declared_uno != "uno"){
-            printf("> Uh oh! You didn't say Uno! You'll now draw two cards!");
-            player->hand_cards[player->hand_size++] = deckDraw(&game->deck);
-            player->hand_cards[player->hand_size++] = deckDraw(&game->deck);
-        }
-        else{
-            printf("> Player %d has declared uno!", game->current_player);
-        }
-    }
-}
 
 void decide_next_player(Game *game)
 {
@@ -480,117 +276,248 @@ void decide_next_player(Game *game)
     }
 }
 
-void gameplay(Game *game)
-{
-    while (!game->decided_winner)
-    {
-        player_turn(&game->players[game->current_player], game);
-        game->decided_winner = (&game->players[game->current_player], game);
-        decide_next_player(game);
-    }
-    printf("{ %s WINS! }\n\n", game->players[game->winner].player_name);
+
+
+// Pass logging mechanism
+void enqueue_log(char *msg) {
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    char timed_msg[LOG_MSG_LEN];
+
+    int time_len = strftime(timed_msg, LOG_MSG_LEN, "[%H:%M:%S] ", t);
+    snprintf(timed_msg + time_len, LOG_MSG_LEN - time_len, "%s", msg);
+
+    sem_wait(&shm->logger.space_left);
+    pthread_mutex_lock(&shm->logger.lock);    
+    
+    strncpy(shm->logger.queue[shm->logger.tail], timed_msg, LOG_MSG_LEN - 1);
+    shm->logger.queue[shm->logger.tail][LOG_MSG_LEN - 1] = '\0';
+    
+    shm->logger.tail = (shm->logger.tail + 1) % LOG_QUEUE_SIZE;
+    
+    pthread_mutex_unlock(&shm->logger.lock);
+    sem_post(&shm->logger.count);
 }
 
-void game_init(Game *game)
-{
-    deckInit(&game->deck);
-    game->gameFlow = 1;
-    game->current_player = 0;
-    game->current_card = 0;
-    game->next_player = game->current_player + game->gameFlow;
+// THE ACTUAL THREAD LOGGING
+void *logger_thread_func(void *arg) {
+    LogQueue *lq = (LogQueue *)arg;
 
-    // Give out 7 cards to each player
-    for (int i = 0; i < MAX_PLAYERS; i++)
-    {
-        for (int j = 0; j < 7; j++)
-        {
-            player_add_card(&game->players[i], deckDraw(&game->deck));
+    FILE *fp = fopen("game_log", "a");
+    if (!fp) {
+        perror("Logger failed to open file");
+        pthread_exit(NULL);
+    }
+
+    while (1) {
+        sem_wait(&lq->count);
+
+        pthread_mutex_lock(&lq->lock);
+
+        char buffer[LOG_MSG_LEN];
+        strcpy(buffer, lq->queue[lq->head]);
+
+        lq->head = (lq->head + 1) % LOG_QUEUE_SIZE;
+
+        pthread_mutex_unlock(&lq->lock);
+        sem_post(&lq->space_left);
+
+        fprintf(fp, "%s\n", buffer);
+        fflush(fp); // Ensure it saves immediately
+
+        if (strcmp(buffer, "SERVER_SHUTDOWN") == 0) break;
+    }
+
+    fclose(fp);
+    return NULL;
+}
+
+// If player disconnect
+void handle_disconnect(int player_index, char *player_name, int fd) {
+    char log_msg[LOG_MSG_LEN];
+
+    snprintf(log_msg, LOG_MSG_LEN, "DISCONNECT: Player %s (Index %d) left.", player_name, player_index);
+    enqueue_log(log_msg);
+
+    if (fd != -1) {
+        close(fd);
+    }
+
+    printf("Player %s disconnected. Cleaning up child process...\n", player_name);
+    shm->players[player_index].is_active = 0;
+    exit(0);
+}
+
+// Game starts
+int main() {
+    int num_players = 0;
+    int countdown = 60;
+    char player_names[5][NAME_SIZE];
+    int client_pid_list[5];
+    char raw_buffer[128];
+
+    int player_pipes[5];
+    for (int i=0; i<5; i++)
+        player_pipes[i] = -1;
+
+    shm = mmap(NULL, sizeof(GameState), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+
+    if(shm == MAP_FAILED) {
+      perror("mmap failed");
+      return 1;
+    }
+
+    // Initialize Sync Premitives in Shared Memory
+    sem_init(&shm->logger.count, 1, 0); 
+    sem_init(&shm->logger.space_left, 1, LOG_QUEUE_SIZE);
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED);
+    pthread_mutex_init(&shm->logger.lock, &attr);
+
+    pthread_mutex_init(&shm->game_lock, &attr);
+
+    pthread_condattr_t cattr;
+    pthread_condattr_init(&cattr);
+    pthread_condattr_setpshared(&cattr, PTHREAD_PROCESS_SHARED);
+    pthread_cond_init(&shm->turn_cond, &cattr);
+
+    pthread_t log_tid;
+    pthread_create(&log_tid, NULL, logger_thread_func, (void *)&shm->logger);
+
+    unlink(JOIN_FIFO); // Remove any existing FIFO
+    if (mkfifo(JOIN_FIFO, 0666) == -1) {
+        perror("Failed to create join FIFO");
+        enqueue_log("Failed to create join FIFO");
+        return 1;
+    }
+
+    int join_fd = open(JOIN_FIFO, O_RDONLY | O_NONBLOCK);
+    if (join_fd == -1) {
+        perror("Failed to open join FIFO");
+        enqueue_log("Failed to open join FIFO");
+        unlink(JOIN_FIFO);
+        return 1;
+    }
+
+    enqueue_log("Server started, waiting for players to join.");
+
+    for (int i = countdown; i > 0; i--) { 
+        int n = read(join_fd, raw_buffer, sizeof(raw_buffer)-1);
+        if (n > 0) {
+            raw_buffer[n] = '\0';
+            char *line = strtok(raw_buffer, "\n");
+
+            while (line != NULL) {
+                int client_pid;
+                char temp_name[NAME_SIZE];
+                if (sscanf(line, "%d %49[^\n]", &client_pid, temp_name) == 2) {
+                    if (num_players < 5) {
+                        strncpy(player_names[num_players], temp_name, NAME_SIZE);
+                        client_pid_list[num_players] = client_pid;
+
+                        strncpy(shm->players[num_players].player_name, temp_name, NAME_SIZE);
+                        shm->players[num_players].pid = client_pid;
+                        shm->players[num_players].is_active = 1;
+                        shm->players[num_players].hand_size = 0;
+
+                        char log_msg[LOG_MSG_LEN];
+                        snprintf(log_msg, LOG_MSG_LEN, "Player joined: %s (PID: %d)", temp_name, client_pid);
+                        enqueue_log(log_msg);
+                        
+                        char client_fifo[64];
+                        snprintf(client_fifo, 64, "/tmp/client_%d", client_pid);
+                        int c_fd = open(client_fifo, O_WRONLY);
+                        if (c_fd != -1) {
+                            write(c_fd, "Welcome to the game!\n", 21);
+                            player_pipes[num_players] = c_fd;
+                        }
+
+                        num_players++;
+                        shm->num_players = num_players;
+                    }
+                }
+                line = strtok(NULL, "\n");
+            }
         }
+
+        printf("\033[2J\033[H"); // Clear Screen and move cursor to top
+        printf("Initiated Server Client of Ono Card Ono Game\n");
+        printf("Waiting for players to join...\n");
+        printf("Current players: %d\n", num_players);
+        printf("Time left to join: %d seconds\n", i - 1);
+        printf("Players:\n");
+        for(int p=0; p<num_players; p++)
+            printf(" - %s\n", player_names[p]);
+        fflush(stdout);
+
+        if (i == 0 && (num_players > 1 || num_players < 6))
+            break;
+
+        if (num_players == 5)
+            break;
+            
+        sleep(1);
+    }
+    close(join_fd);
+    unlink(JOIN_FIFO);
+
+    printf("\033[2J\033[H");
+    fflush(stdout);
+
+    if (num_players > 1 && num_players < 6) {
+        printf("Game starting with %d players!\n", num_players);
+        for (int i = 0; i < num_players; i++) {
+            printf("Player %s\n", player_names[i]); // and then followed with line 213 for loop
+        }
+
+        deckInit(&shm->deck);
+        deckShuffle(&shm->deck);
+        
+        for (int i=0; i<num_players; i++){
+            for (int c=0; c<7; c++)
+                player_add_card(&shm->players[i], deckDraw(&shm->deck));
+        }
+
+        for (int i=0; i < num_players; i++) {
+            pid_t pid = fork();
+
+            if (pid == 0) {
+                char client_in_fifo[64];
+                snprintf(client_in_fifo, 64, "/tmp/client_%d_in", client_pid_list[i]);
+                int player_fd = open(client_in_fifo, O_RDONLY);
+                if(player_fd == -1){
+                    perror("Child failed to open player input pipe");
+                    exit(1);
+                }
+
+                while (1) {
+                    char buffer[1024];
+                    int n = read(player_fd, buffer, sizeof(buffer));
+
+                    if (n > 0) {
+                        // Process Game Move, Determine winner [ELSA PART]
+                    } else if (n == 0) {
+                        handle_disconnect(i, player_names[i], player_fd);
+                    }
+                }
+                exit(0);
+            } else {
+                if (player_pipes[i] != -1)
+                    close(player_pipes[i]);
+            }            
+        }
+
+        // Round Robin Scheduler, Parent Process [ELSA PART]
+
+        enqueue_log("Server shutting down.");
+    } else {    
+        fprintf(stderr, "Number of players must be between 2 and 5.\n");
+        return 1;
     }
 
-    // Play the starting card
-    game->played_cards[0] = deckDraw(&game->deck);
-    while ((game->played_cards[0].type != CARD_NUMBER_TYPE))
-    {
-        deckShuffle(&game->deck);
-        game->played_cards[0] = deckDraw(&game->deck);
-    }
-    game->current_card = 1;
-
-    gameplay(game);
+    pthread_join(log_tid, NULL);
+    return 0;
 }
 
-void execute_reverse_card(Game *game)
-{
-    switch (game->gameFlow)
-    {
-    case 1:
-        game->gameFlow = -1;
-        break;
-    case -1:
-        game->gameFlow = 1;
-        break;
-    default:
-        game->gameFlow = 1;
-    }
-}
 
-void execute_skip_card(Game *game)
-{
-    game->current_player+= game->gameFlow;
-    game->next_player+= game->gameFlow;
-}
-
-void execute_draw_two_card(Game *game)
-{
-    game->players[game->next_player].hand_cards[game->players[game->next_player].hand_size++] = deckDraw(&game->deck);
-    game->players[game->next_player].hand_cards[game->players[game->next_player].hand_size++] = deckDraw(&game->deck);
-}
-
-void execute_wild_card(Game *game)
-{
-    uint8_t chosen_colour;
-    printf("> Choose a colour, 1: Red, 2: Blue, 3: Green, 4: Yellow: ");
-    scanf("%hhu", &chosen_colour);
-    switch(chosen_colour){
-        case 1: game->played_cards[game->current_card].colour = CARD_COLOUR_RED; break;
-        case 2: game->played_cards[game->current_card].colour = CARD_COLOUR_BLUE; break;
-        case 3: game->played_cards[game->current_card].colour = CARD_COLOUR_GREEN; break;
-        case 4: game->played_cards[game->current_card].colour = CARD_COLOUR_YELLOW; break;
-        default: printf("Unknown colour picked");
-    }
-}
-
-void execute_wild_card_draw_four(Game *game)
-{
-    execute_wild_card(game);
-    for(int i = 0; i < 4; i++)
-        game->players[game->next_player].hand_cards[game->players[game->next_player].hand_size++] = deckDraw(&game->deck);
-}
-
-// For when a player plays a power card/wild card
-void execute_card_effect(Card *c, Game *game)
-{
-    switch (c->value)
-    {
-    case CARD_VALUE_SKIP:
-        execute_skip_card(game);
-        break;
-    case CARD_VALUE_REVERSE:
-        execute_reverse_card(game);
-        break;
-    case CARD_VALUE_DRAW_TWO:
-        execute_draw_two_card(game);
-        break;
-    case CARD_VALUE_WILD:
-        execute_wild_card(game);
-        break;
-    case CARD_VALUE_WILD_DRAW_FOUR:
-        execute_wild_card_draw_four(game);
-        break;
-    default:
-        break;
-    }
-}
-
-#endif // GAME
