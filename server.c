@@ -117,6 +117,7 @@ void handle_disconnect(int player_index, char *player_name, int fd) {
     }
 
     printf("Player %s disconnected. Cleaning up child process...\n", player_name);
+    shm->players[player_index].is_active = 0;
     exit(0);
 }
 
@@ -127,6 +128,10 @@ int main() {
     char player_names[5][NAME_SIZE];
     int client_pid_list[5];
     char raw_buffer[128];
+
+    int player_pipes[5];
+    for (int i=0; i<5; i++)
+        player_pipes[i] = -1;
 
     shm = mmap(NULL, sizeof(GameState), PROT_READ | PROT_WRITE,
               MAP_SHARED | MAP_ANONYMOUS, -1, 0);
@@ -189,9 +194,7 @@ int main() {
                         shm->players[num_players].pid = client_pid;
                         shm->players[num_players].is_active = 1;
                         shm->players[num_players].cards = START_CARD_DECK;
-                        num_players++;
-                        shm->num_players = num_players;
-                        
+
                         char log_msg[LOG_MSG_LEN];
                         snprintf(log_msg, LOG_MSG_LEN, "Player joined: %s (PID: %d)", temp_name, client_pid);
                         enqueue_log(log_msg);
@@ -201,8 +204,11 @@ int main() {
                         int c_fd = open(client_fifo, O_WRONLY);
                         if (c_fd != -1) {
                             write(c_fd, "Welcome to the game!\n", 21);
-                            close(c_fd);
+                            player_pipes[num_players] = c_fd;
                         }
+
+                        num_players++;
+                        shm->num_players = num_players;
                     }
                 }
                 line = strtok(NULL, "\n");
@@ -243,11 +249,9 @@ int main() {
             pid_t pid = fork();
 
             if (pid == 0) {
-                char client_fifo[64];
-                snprintf(client_fifo, 64, "/tmp/client_%d_in", client_pid_list[i]);
-
-                int player_fd = open(client_fifo, O_RDONLY);
-
+                char client_in_fifo[64];
+                snprintf(client_in_fifo, 64, "/tmp/client_%d_in", client_pid_list[i]);
+                int player_fd = open(client_in_fifo, O_RDONLY);
                 if(player_fd == -1){
                     perror("Child failed to open player input pipe");
                     exit(1);
@@ -264,16 +268,20 @@ int main() {
                     }
                 }
                 exit(0);
-            }
+            } else {
+                if (player_pipes[i] != -1)
+                    close(player_pipes[i]);
+            }            
         }
 
         // Round Robin Scheduler, Parent Process [ELSA PART]
+
+        enqueue_log("Server shutting down.");
     } else {    
         fprintf(stderr, "Number of players must be between 2 and 5.\n");
         return 1;
     }
 
-    enqueue_log("Server shutting down.");
     pthread_join(log_tid, NULL);
     return 0;
 }
