@@ -12,6 +12,12 @@
 #define NAME_SIZE 50
 #define JOIN_FIFO "/tmp/join_fifo"
 #define MAX_BUFFER 1024
+
+typedef struct game Game;
+typedef struct player Player;
+typedef struct deck Deck;
+typedef struct Card Card;
+
 #ifndef CARD
 #define CARD
 
@@ -95,7 +101,7 @@ bool playable_card(Card *card, Card *top_card)
     }
 
     // Check for wild cards
-    else if (card->colour == CARD_COLOUR_BLACK || card->type == CARD_WILD_TYPE)
+    else if (card->type == CARD_WILD_TYPE)
     {
         return true;
     }
@@ -265,8 +271,8 @@ void player_add_card(Player *player, Card new_card)
 {
     if (player->hand_size < MAX_HAND_SIZE)
     {
-        player->hand_size++;
         player->hand_cards[player->hand_size] = new_card;
+        player->hand_size++;
     }
 }
 
@@ -283,7 +289,7 @@ void player_play_card(Player *player, uint8_t card_played, Game *game)
     }
     game->played_cards[++game->current_card] = player->hand_cards[player->hand_size - 1];
     player->hand_size--;
-    printf("A %d(%s) has been played!", game->played_cards[game->current_card].value, get_colour_name(&game->played_cards[game->current_card]));
+    printf("> A %d(%s) has been played!", game->played_cards[game->current_card].value, get_colour_name(&game->played_cards[game->current_card]));
     execute_card_effect(&game->played_cards[game->current_card], &game);
 }
 
@@ -387,14 +393,33 @@ void gameplay(Game *game)
         game->decided_winner = (&game->players[game->current_player], game);
         decide_next_player(game);
     }
+    printf("{ %s WINS! }\n\n", game->players[game->winner].player_name);
 }
 
-void check_for_winner(Player *player, Game *game)
+bool check_for_winner(Player *player, Game *game)
 {
+    if(player->hand_size == 0){
+        game->winner = game->current_player;
+        return 1;
+    }
 }
 
 void check_for_uno(Player *player, Game *game)
-{
+{   
+    char declared_uno[3];
+    if(player->hand_size == 1){
+        printf("> You are about to win! Type 'Uno' or draw two cards: ");
+        scanf("%s", declared_uno);
+
+        if(declared_uno != "uno"){
+            printf("> Uh oh! You didn't say Uno! You'll now draw two cards!");
+            player->hand_cards[player->hand_size++] = deckDraw(&game->deck, game);
+            player->hand_cards[player->hand_size++] = deckDraw(&game->deck, game);
+        }
+        else{
+            printf("> Player %d has declared uno!", game->current_player);
+        }
+    }
 }
 
 void decide_next_player(Game *game)
@@ -456,18 +481,35 @@ static void execute_reverse_card(Game *game)
 
 static void execute_skip_card(Game *game)
 {
+    game->current_player+= game->gameFlow;
+    game->next_player+= game->gameFlow;
 }
 
 static void execute_draw_two_card(Game *game)
 {
+    game->players[game->next_player].hand_cards[game->players[game->next_player].hand_size++] = deckDraw(&game->deck, game);
+    game->players[game->next_player].hand_cards[game->players[game->next_player].hand_size++] = deckDraw(&game->deck, game);
 }
 
 static void execute_wild_card(Game *game)
 {
+    uint8_t chosen_colour;
+    fprint("> Choose a colour, 1: Red, 2: Blue, 3: Green, 4: Yellow: ");
+    scanf("%d", chosen_colour);
+    switch(chosen_colour){
+        case 1: game->played_cards[game->current_card].colour = CARD_COLOUR_RED; break;
+        case 2: game->played_cards[game->current_card].colour = CARD_COLOUR_BLUE; break;
+        case 3: game->played_cards[game->current_card].colour = CARD_COLOUR_GREEN; break;
+        case 4: game->played_cards[game->current_card].colour = CARD_COLOUR_YELLOW; break;
+        default: fprint("Unknown colour picked");
+    }
 }
 
 static void execute_wild_card_draw_four(Game *game)
 {
+    execute_wild_card(game);
+    for(int i = 0; i < 4; i++)
+        game->players[game->next_player].hand_cards[game->players[game->next_player].hand_size++] = deckDraw(&game->deck, game);
 }
 
 #endif // GAME
