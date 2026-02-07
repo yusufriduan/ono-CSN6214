@@ -13,6 +13,7 @@
 #include <sys/mman.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <signal.h>
 
 #define LOG_QUEUE_SIZE 50
 #define LOG_MSG_LEN 100
@@ -571,21 +572,22 @@ bool check_for_winner(Player *player)
 void decide_next_player(GameState *game)
 {
     int n = game->num_players;
+    int attempts = 0;
 
-    // if (game->next_player >= n)
-    // {
-    //     game->current_player = 0; // Wrap back to the first player.
-    // }
-    // else if (game->next_player < 0)
-    // {
-    //     game->current_player = n - 1; // Wrap back to the last player.
-    // }
-    // else
-    // {
-    //     game->current_player = game->next_player;
-    // }
     game->current_player = (game->next_player + n) % n;
-    game->next_player = (game->current_player + game->direction) % n;
+
+    while(!game->players[game->current_player].is_active && attempts < n) {
+        game->current_player = (game->current_player + game->direction + n) % n;
+        attempts++;
+    }
+
+    game->next_player = (game->current_player + game->direction + n) % n;
+
+    attempts = 0;
+    while(!game->players[game->next_player].is_active && attempts < n) {
+        game->next_player = (game->next_player + game->direction + n) % n;
+        attempts++;
+    }
 }
 
 // Pass logging mechanism
@@ -655,6 +657,12 @@ void handle_disconnect(int player_index, char *player_name, int fd) {
 
     printf("Player %s disconnected. Cleaning up child process...\n", player_name);
     shm->players[player_index].is_active = 0;
+
+    pthread_mutex_lock(&shm->game_lock);
+    shm->move_ready = 1;
+    shm->player_move_index = player_index;
+    pthread_cond_broadcast(&shm->turn_cond);
+    pthread_mutex_unlock(&shm->game_lock);
     exit(0);
 }
 
@@ -695,7 +703,7 @@ int get_card_score(Card *c) {
     } else if (c->type == CARD_WILD_TYPE || c->type == CARD_WILD_DRAW_FOUR_TYPE) {
         return 50;
     } else {
-        return 0;
+        return 20;
     }
 }
 
@@ -732,6 +740,7 @@ void save_scores(GameState *game) {
 
 // Game starts
 int main() {
+    signal(SIGPIPE, SIG_IGN); // Ignore SIGPIPE to prevent crashes on broken pipes
     int num_players = 0;
     int countdown = 60;
     char player_names[5][NAME_SIZE];
@@ -925,6 +934,23 @@ int main() {
 
                 pthread_cond_wait(&shm->turn_cond, &shm->game_lock);
             }
+
+            // Check if the player is still active
+            if (!shm->players[player].is_active) {
+                printf("Player %s has disconnected. Skipping their turn.\n", shm->players[player].player_name);
+                shm->move_ready = 0;
+
+                decide_next_player(shm);
+
+                for(int p=0; p< shm->num_players ; p++) {
+                    if (shm->players[p].is_active) {
+                        update_player_client(p, player_pipes[p]);
+                    }
+                }
+                pthread_mutex_unlock(&shm->game_lock);
+                continue; // Skip to next iteration if player disconnected
+            }
+
             //apply move changes 
             bool success = player_turn(player, shm);
             shm->move_ready = 0;

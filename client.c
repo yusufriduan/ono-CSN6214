@@ -233,7 +233,6 @@ int main() {
                             if (strcasecmp(colour_str, "uno") == 0) {
                                 uno_declaration = 1;
                                 snprintf(out, sizeof(out), "MOVE %d %d\n", card_index, uno_declaration);
-                                break;
                             }
                             // User provided a colour
                             else if (strcasecmp(colour_str, "red") == 0) {
