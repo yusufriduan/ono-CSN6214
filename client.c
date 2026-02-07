@@ -121,7 +121,6 @@ int main() {
 
             if (is_turn_msg(buffer))
             {
-
                 char move[128];
 
                 printf("Your move (move <something> / draw / quit): ");
