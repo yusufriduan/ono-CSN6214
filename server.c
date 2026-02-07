@@ -132,7 +132,7 @@ void deckInit(Deck *onoDeck);
 void deckShuffle(Deck *onoDeck);
 bool check_for_winner(Player *player);
 void player_turn(Player *player, GameState *game);
-void gameplay(GameState *game);
+//void gameplay(GameState *game);
 void game_init(GameState *game);
 
 Card deckDraw(Deck *onoDeck)
@@ -378,46 +378,46 @@ void check_for_uno(Player *player, GameState *game)
     }
 }
 
-void gameplay(GameState *game)
-{
-    while (!game->winner_pid)
-    {
-        player_turn(&game->players[game->current_player], game);
-        if (check_for_winner(&game->players[game->current_player]))
-            game->game_over = 1;
-        decide_next_player(game);
-    }
-    printf("{ %s WINS! }\n\n", game->players[game->winner_pid].player_name);
-}
+// void gameplay(GameState *game)
+// {
+//     while (!game->winner_pid)
+//     {
+//         player_turn(&game->players[game->current_player], game);
+//         if (check_for_winner(&game->players[game->current_player]))
+//             game->game_over = 1;
+//         decide_next_player(game);
+//     }
+//     printf("{ %s WINS! }\n\n", game->players[game->winner_pid].player_name);
+// }
 
-void game_init(GameState *game)
-{
-    deckInit(&game->deck);
-    game->direction = 1;
-    game->current_player = 0;
-    game->current_card_idx = 0;
-    game->next_player = game->current_player + game->direction;
+// void game_init(GameState *game)
+// {
+//     deckInit(&game->deck);
+//     game->direction = 1;
+//     game->current_player = 0;
+//     game->current_card_idx = 0;
+//     game->next_player = game->current_player + game->direction;
 
-    // Give out 7 cards to each player
-    for (int i = 0; i < MAX_PLAYERS; i++)
-    {
-        for (int j = 0; j < 7; j++)
-        {
-            player_add_card(&game->players[i], deckDraw(&game->deck));
-        }
-    }
+//     // Give out 7 cards to each player
+//     for (int i = 0; i < MAX_PLAYERS; i++)
+//     {
+//         for (int j = 0; j < 7; j++)
+//         {
+//             player_add_card(&game->players[i], deckDraw(&game->deck));
+//         }
+//     }
 
-    // Play the starting card
-    game->played_cards[0] = deckDraw(&game->deck);
-    while ((game->played_cards[0].type != CARD_NUMBER_TYPE))
-    {
-        deckShuffle(&game->deck);
-        game->played_cards[0] = deckDraw(&game->deck);
-    }
-    game->current_card_idx = 1;
+//     // Play the starting card
+//     game->played_cards[0] = deckDraw(&game->deck);
+//     while ((game->played_cards[0].type != CARD_NUMBER_TYPE))
+//     {
+//         deckShuffle(&game->deck);
+//         game->played_cards[0] = deckDraw(&game->deck);
+//     }
+//     game->current_card_idx = 1;
 
-    gameplay(game);
-}
+//     //gameplay(game);
+// }
 
 
 
@@ -729,6 +729,12 @@ int main() {
     printf("\033[2J\033[H");
     fflush(stdout);
 
+    // initialize game state
+    shm->direction = 1;
+    shm->current_player = 0;
+    shm->current_card_idx = 0;
+    shm->next_player = shm->current_player + shm->direction;
+
     if (num_players > 1 && num_players < 6) {
         printf("Game starting with %d players!\n", num_players);
         for (int i = 0; i < num_players; i++) {
@@ -800,12 +806,12 @@ int main() {
             while(!shm->move_ready){
 
                 // wait until player finished move
-                pthread_cond_wait(&shm->turn_cond);
+                pthread_cond_wait(&shm->turn_cond, &shm->game_lock);
             }
             pthread_mutex_unlock(&shm->game_lock);// unlocks game
 
             //apply move changes 
-            apply_move(player, shm->stored_move);
+            player_turn(player, shm);            
             shm->move_ready = 0;
 
             pthread_mutex_lock(&shm->game_lock);// locks game
@@ -814,7 +820,7 @@ int main() {
             if(check_for_winner(&shm->players[player])){
 
             shm->game_over = true;
-            printf("The winner of the game is %s !", );
+            printf("The winner of the game is %s !\n", shm->players[player].player_name);
             break;
 
             }
@@ -831,5 +837,4 @@ int main() {
     pthread_join(log_tid, NULL);
     return 0;
 }
-
 
