@@ -125,6 +125,12 @@ typedef struct {
   // Sync prmitives for the Game State
   pthread_mutex_t game_lock;
   pthread_cond_t turn_cond;
+
+  // store player moves (card being played)
+  char stored_move[64];      // input from player is stored
+  int move_ready;          // 0 = not ready, 1 = waiting
+  int player_move_index;  //index of player send
+
 } GameState;
 GameState *shm;
 
@@ -283,7 +289,7 @@ void player_play_card(Player *player, uint8_t card_played, Game *game)
     execute_card_effect(&game->played_cards[game->current_card], game);
 }
 
-Card deckDraw(Game* game)
+Card deckDraw(Game* game)   
 {
     if (game->deck.deckCards[game->deck.top_index] >= DECK_SIZE)
     {
@@ -556,7 +562,20 @@ int main() {
                     int n = read(player_fd, buffer, sizeof(buffer));
 
                     if (n > 0) {
-                        // Process Game Move, Determine winner [ELSA PART]
+                        // Process Game Move [ELSA PART]
+
+                        buffer[n] = '\0'; //convert from bytes to C string 
+                        pthead_mutex_lock(&shm->game_lock); // freeze game state, prevent others from altering
+
+                        // copy move into gamestate (store the move)
+                        strncpy(shm->stored_move, buffer, (sizeof(shm->stored_move)-1)); //minus 1 to exlude '\0'
+
+                        shm->move_ready = 1; // ready for next player's move 
+                        shm->player_move_index = i; // updates the player who sent the moves
+
+                        pthread_cond_signal(&shm->turn_cond); // wake up parent process
+                        pthread_mutex_unlock(&shm->game_lock); // unfreeze gamestate, allow others to alter
+
                     } else if (n == 0) {
                         handle_disconnect(i, player_names[i], player_fd);
                     }
@@ -567,9 +586,47 @@ int main() {
                     close(player_pipes[i]);
             }            
         }
+        // Round Robin Scheduler, Parent Process [ELSA PART] 
+        // Check winner
 
-        // Round Robin Scheduler, Parent Process [ELSA PART]
+        while(!shm->game_over){
 
+            pthread_mutex_lock(&shm->game_lock);// locks game
+            uint8_t player = shm->current_player;     
+            pthread_mutex_unlock(&shm->game_lock);// unlocks game
+
+            // inform next player of their move
+            write(player_pipes[player], "TURN\n", 5); 
+
+            pthread_mutex_lock(&shm->game_lock);
+            while(!shm->move_ready){
+
+                // wait until player finished move
+                pthread_cond_wait(&shm->turn_cond);
+            }
+            pthread_mutex_unlock(&shm->game_lock);// unlocks game
+
+            //apply move changes 
+            apply_move(player, shm->stored_move);
+            shm->move_ready = 0;
+
+            pthread_mutex_lock(&shm->game_lock);// locks game
+
+            //check for winner, if yes then do update 
+            if(check_for_winner(player, shm)){
+
+            shm->game_over = true;
+            printf("The winner of the game is %s !", );
+            break;
+
+            }
+        }
+        //updates current player for game 
+        decide_next_player((Game*)shm);
+        pthread_mutex_unlock(&shm->game_lock);// unlocks game
+
+){
+        }
         enqueue_log("Server shutting down.");
     } else {    
         fprintf(stderr, "Number of players must be between 2 and 5.\n");
