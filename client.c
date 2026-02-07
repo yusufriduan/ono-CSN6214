@@ -8,8 +8,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <time.h>
-#include <ctype.h>
-
 
 #define NAME_SIZE 50
 #define JOIN_FIFO "/tmp/join_fifo"
@@ -231,22 +229,22 @@ int main() {
 
                         if (args == 2) {
                             // User declares uno
-                            if (strcasecmp(tolower(colour_str), "uno") == 0) {
+                            if (strcasecmp(colour_str, "uno") == 0) {
                                 uno_declaration = 1;
                                 snprintf(out, sizeof(out), "MOVE %d %d\n", card_index, uno_declaration);
                                 break;
                             }
                             // User provided a colour
-                            else if (strcasecmp(tolower(colour_str), "red") == 0) {
+                            else if (strcasecmp(colour_str, "red") == 0) {
                                 colour_code = 1;
                                 snprintf(out, sizeof(out), "MOVE %d %d\n", card_index, colour_code);
-                            } else if (strcasecmp(tolower(colour_str), "blue") == 0) {
+                            } else if (strcasecmp(colour_str, "blue") == 0) {
                                 colour_code = 2;
                                 snprintf(out, sizeof(out), "MOVE %d %d\n", card_index, colour_code);
-                            } else if (strcasecmp(tolower(colour_str), "green") == 0) {
+                            } else if (strcasecmp(colour_str, "green") == 0) {
                                 colour_code = 3;
                                 snprintf(out, sizeof(out), "MOVE %d %d\n", card_index, colour_code);
-                            } else if (strcasecmp(tolower(colour_str), "yellow") == 0) {
+                            } else if (strcasecmp(colour_str, "yellow") == 0) {
                                 colour_code = 4;
                                 snprintf(out, sizeof(out), "MOVE %d %d\n", card_index, colour_code);
                             }
