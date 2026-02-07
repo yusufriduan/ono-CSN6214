@@ -52,13 +52,22 @@ static void show_hand(const char *line) {
 
     // Make a copy so strtok doesn't destroy original buffer
     char temp[MAX_BUFFER];
-    snprintf(temp, sizeof(temp), "%s", p);
+    size_t len = strcspn(p, "\n");
+    if (len >= sizeof(temp))
+    {
+        len = sizeof(temp) - 1;
+    }
+    
+    strncpy(temp, p, len);
+    temp[len] = '\0';
 
     int idx = 1;
     char *token = strtok(temp, ",");
     while (token != NULL) {
         while (*token == ' ') token++;   // skip leading spaces
-        printf("%d) %s\n", idx++, token);
+        if (strlen(token) > 0) {
+            printf("%d: %s\n", idx++, token);
+        }
         token = strtok(NULL, ",");
     }
 }
@@ -205,9 +214,31 @@ int main() {
                     // move
                     char out[180];
 
-                    if (strncmp(move, "move", 5) == 0)
+                    if (strncmp(move, "move", 4) == 0)
                     {
-                        snprintf(out, sizeof(out), "MOVE %s\n", move + 5);
+                        int card_index;
+                        char colour_str[20];
+                        int colour_code = 0; // Default 0
+
+                        int args = sscanf(move + 5, "%d %s", &card_index, colour_str);
+
+                        if (args == 2) {
+                            // User provided a colour
+                            if (strcasecmp(colour_str, "red") == 0) {
+                                colour_code = 1;
+                            } else if (strcasecmp(colour_str, "blue") == 0) {
+                                colour_code = 2;
+                            } else if (strcasecmp(colour_str, "green") == 0) {
+                                colour_code = 3;
+                            } else if (strcasecmp(colour_str, "yellow") == 0) {
+                                colour_code = 4;
+                            }
+
+                            snprintf(out, sizeof(out), "MOVE %d %d\n", card_index, colour_code);
+                        } else {
+                            // No colour provided
+                            snprintf(out, sizeof(out), "MOVE %d 0\n", card_index);
+                        }
                     }
                     else
                     {
