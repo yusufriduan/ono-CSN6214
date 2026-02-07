@@ -26,11 +26,19 @@ static void show_top(const char *line) {
     // line e.g. : "PILE: RED 5"
     const char *p = strstr(line, "PILE:");
     if (!p) return;
-    p += 4; // skip "PILE:"
+    p += 5; // skip "PILE:"
     while (*p == ' ') p++;
 
     printf("\n=== Pile Card ===\n");
-    printf("%s\n", p);
+    // Create a temporary buffer to print ONLY the current line
+    char card_text[64];
+    size_t len = strcspn(p, "\n"); // Calculate length until the next newline
+    if (len >= sizeof(card_text)) len = sizeof(card_text) - 1;
+    
+    strncpy(card_text, p, len);
+    card_text[len] = '\0'; // Ensure null-termination
+
+    printf("%s\n", card_text);
 }
 
 static void show_hand(const char *line) {
@@ -160,7 +168,7 @@ int main() {
         
         if (bytes_read > 0) {
             // Received data from server!
-            printf("[Server]: %s\n", buffer);
+            // printf("[Server]: %s\n", buffer);
             game_display(buffer);
 
             // Check for game over

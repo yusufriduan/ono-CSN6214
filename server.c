@@ -372,6 +372,25 @@ void player_turn(int player_index, GameState *game) {
 
 #endif
 
+void format_card_to_string(Card *c, char *buffer) {
+    const char *colour = get_colour_name(c->colour);
+
+    if (c->type == CARD_NUMBER_TYPE) {
+        sprintf(buffer, "%d (%s)", c->value, colour);
+    } else {
+        const char *type_str;
+        switch (c->type) {
+            case CARD_SKIP_TYPE: type_str = "SKIP"; break;
+            case CARD_REVERSE_TYPE: type_str = "REVERSE"; break;
+            case CARD_DRAW_TWO_TYPE: type_str = "DRAW TWO"; break;
+            case CARD_WILD_TYPE: type_str = "WILD"; break;
+            case CARD_WILD_DRAW_FOUR_TYPE: type_str = "WILD DRAW FOUR"; break;
+            default: type_str = "UNKNOWN"; break;
+        }
+        sprintf(buffer, "%s %s", type_str, colour);
+    }
+}
+
 void check_for_uno(Player *player, GameState *game)
 {   
     char declared_uno[3];
@@ -624,6 +643,37 @@ void handle_disconnect(int player_index, char *player_name, int fd) {
     exit(0);
 }
 
+void update_player_client(int player_index, int pipe_fd) {
+    char msg[1024] = {0};
+    char card_str[50];
+
+    // Send top card on pile
+    Card *top_card = &shm->played_cards[shm->current_card_idx];
+    format_card_to_string(top_card, card_str);
+
+    strcat(msg, "PILE:");
+    strcat(msg, card_str);
+    strcat(msg, "\n");
+
+    // Send player's hand
+    strcat(msg, "HAND:");
+    Player *P = &shm->players[player_index];
+
+    for (int i = 0; i < P->hand_size; i++) {
+        format_card_to_string(&P->hand_cards[i], card_str);
+        strcat(msg, card_str);
+
+        // Add comma if not the last card
+        if (i < P->hand_size - 1) {
+            strcat(msg, ",");
+        }
+    }
+    strcat(msg, "\n");
+
+    // Send the message to the player
+    write(pipe_fd, msg, strlen(msg));
+}
+
 // Game starts
 int main() {
     int num_players = 0;
@@ -807,6 +857,8 @@ int main() {
             pthread_mutex_lock(&shm->game_lock);// locks game
             uint8_t player = shm->current_player;     
             pthread_mutex_unlock(&shm->game_lock);// unlocks game
+
+            update_player_client(player, player_pipes[player]);
 
             // inform next player of their move
             write(player_pipes[player], "TURN\n", 5); 
