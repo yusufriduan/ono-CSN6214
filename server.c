@@ -688,6 +688,47 @@ void update_player_client(int player_index, int pipe_fd) {
     write(pipe_fd, msg, strlen(msg));
 }
 
+int get_card_score(Card *c) {
+    if (c->type == CARD_NUMBER_TYPE) {
+        return c->value;
+    } else if (c->type == CARD_WILD_TYPE || c->type == CARD_WILD_DRAW_FOUR_TYPE) {
+        return 50;
+    } else {
+        return 0;
+    }
+}
+
+void save_scores(GameState *game) {
+    FILE *fp = fopen("scores.txt", "a");
+    if (!fp) {
+        perror("Failed to open scores.txt");
+        return;
+    }
+
+    time_t now = time(NULL);
+    char *time_str = ctime(&now);
+    time_str[strcspn(time_str, "\n")] = '\0';
+
+    fprintf(fp, "[%s] GAME SCORES: ", time_str);
+    printf("\nSaving Final Scores:\n");
+
+    for (int i = 0; i < game->num_players; i++) {
+        Player *P = &game->players[i];
+        int total_score = 0;
+
+        for (int j = 0; j < P->hand_size; j++) {
+            total_score += get_card_score(&P->hand_cards[j]);
+        }
+
+        fprintf(fp, "%s: %d points; ", P->player_name, total_score);
+        printf(" - %s: %d points\n", P->player_name, total_score);
+    }
+
+    fprintf(fp, "\n");
+    fclose(fp);
+    printf("Scores saved to scores.txt\n");
+}
+
 // Game starts
 int main() {
     int num_players = 0;
@@ -919,6 +960,8 @@ int main() {
     }
 
     printf("Game over! Winner PID: %d\n", shm->winner_pid);
+    save_scores(shm);
+
     enqueue_log("SERVER_SHUTDOWN");
     pthread_join(log_tid, NULL);
     return 0;
