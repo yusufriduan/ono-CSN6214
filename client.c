@@ -22,7 +22,7 @@ int is_turn_msg(const char *msg)
     return (strstr(msg, "TURN") != NULL) || (strstr(msg, "Your turn") != NULL);
 }
 
-static void show_top(const char *line) {
+static void show_pile(const char *line) {
     // line e.g. : "PILE: RED 5"
     const char *p = strstr(line, "PILE:");
     if (!p) return;
@@ -57,7 +57,7 @@ static void show_hand(const char *line) {
 
 static void game_display(const char *msg) {
     // Calling both. If msg doesn't contain PILE/HAND it just prints nothing extra.
-    show_top(msg);
+    show_pile(msg);
     show_hand(msg);
 }
 
