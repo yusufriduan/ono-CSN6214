@@ -9,7 +9,6 @@
 #include <stdbool.h>
 #include <time.h>
 
-
 #define NAME_SIZE 50
 #define JOIN_FIFO "/tmp/join_fifo"
 #define MAX_BUFFER 1024
@@ -62,13 +61,18 @@ static void show_hand(const char *line) {
     temp[len] = '\0';
 
     int idx = 1;
+    int hand_size_checker = 0; //just for uno checking
     char *token = strtok(temp, ",");
     while (token != NULL) {
         while (*token == ' ') token++;   // skip leading spaces
         if (strlen(token) > 0) {
             printf("%d: %s\n", idx++, token);
+            hand_size_checker++;
         }
         token = strtok(NULL, ",");
+    }
+    if(hand_size_checker == 2){
+        printf("\n> You have 2 cards remaining! (move <something> uno) to declare uno!\n");
     }
 }
 
@@ -207,6 +211,7 @@ int main() {
                 // draw
                 if (strcmp(move, "draw") == 0)
                 {
+                    printf("\nYou draw a card\n");
                     write(write_fd, "DRAW\n", 5);
                 }
                 else
@@ -219,22 +224,31 @@ int main() {
                         int card_index;
                         char colour_str[20];
                         int colour_code = 0; // Default 0
+                        int uno_declaration = 0; //To detect if UNO is declared
 
                         int args = sscanf(move + 5, "%d %s", &card_index, colour_str);
 
                         if (args == 2) {
+                            // User declares uno
+                            if (strcasecmp(colour_str, "uno") == 0) {
+                                uno_declaration = 1;
+                                snprintf(out, sizeof(out), "MOVE %d %d\n", card_index, uno_declaration);
+                                break;
+                            }
                             // User provided a colour
-                            if (strcasecmp(colour_str, "red") == 0) {
+                            else if (strcasecmp(colour_str, "red") == 0) {
                                 colour_code = 1;
+                                snprintf(out, sizeof(out), "MOVE %d %d\n", card_index, colour_code);
                             } else if (strcasecmp(colour_str, "blue") == 0) {
                                 colour_code = 2;
+                                snprintf(out, sizeof(out), "MOVE %d %d\n", card_index, colour_code);
                             } else if (strcasecmp(colour_str, "green") == 0) {
                                 colour_code = 3;
+                                snprintf(out, sizeof(out), "MOVE %d %d\n", card_index, colour_code);
                             } else if (strcasecmp(colour_str, "yellow") == 0) {
                                 colour_code = 4;
+                                snprintf(out, sizeof(out), "MOVE %d %d\n", card_index, colour_code);
                             }
-
-                            snprintf(out, sizeof(out), "MOVE %d %d\n", card_index, colour_code);
                         } else {
                             // No colour provided
                             snprintf(out, sizeof(out), "MOVE %d 0\n", card_index);
