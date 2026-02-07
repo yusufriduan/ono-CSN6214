@@ -211,6 +211,7 @@ int main() {
                 // draw
                 if (strcmp(move, "draw") == 0)
                 {
+                    printf("\nYou draw a card\n");
                     write(write_fd, "DRAW\n", 5);
                 }
                 else

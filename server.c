@@ -413,14 +413,14 @@ void format_card_to_string(Card *c, char *buffer) {
 void check_for_uno(Player *player, GameState *game, int uno_declaration){  
     if(player->hand_size == 1){
         if(uno_declaration == 0){
-            printf("> Uh oh! You didn't say Uno! You'll now draw two cards!");
+            printf("Uh oh! You didn't say Uno! You'll now draw two cards!");
             player->hand_cards[player->hand_size++] = deckDraw(&game->deck);
             player->hand_cards[player->hand_size++] = deckDraw(&game->deck);
         }
         else{
-            printf("> Player %d has declared uno!", game->current_player);
+            printf("Player %d has declared uno!", game->current_player);
         }
-}
+    }
 }
 
 // void gameplay(GameState *game)
