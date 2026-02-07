@@ -234,7 +234,7 @@ void execute_reverse_card(GameState *game)
 void execute_skip_card(GameState *game)
 {
     game->current_player+= game->direction;
-    game->next_player+= game->direction;
+    decide_next_player(game);
 }
 
 void execute_draw_two_card(GameState *game)
@@ -556,22 +556,22 @@ bool check_for_winner(Player *player)
 
 void decide_next_player(GameState *game)
 {
-    if (game->next_player >= MAX_PLAYERS)
+    int n = game->num_players;
+
+    if (game->next_player >= n)
     {
         game->current_player = 0; // Wrap back to the first player.
     }
     else if (game->next_player < 0)
     {
-        game->current_player = MAX_PLAYERS - 1; // Wrap back to the last player.
+        game->current_player = n - 1; // Wrap back to the last player.
     }
     else
     {
         game->current_player = game->next_player;
-        game->next_player += game->direction;
     }
+    game->next_player = game->current_player + game->direction;
 }
-
-
 
 // Pass logging mechanism
 void enqueue_log(char *msg) {
