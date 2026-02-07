@@ -131,9 +131,9 @@ void decide_next_player(GameState *game);
 void deckInit(Deck *onoDeck);
 void deckShuffle(Deck *onoDeck);
 bool check_for_winner(Player *player);
-void player_turn(Player *player, GameState *game);
+void player_turn(int player_index, GameState *game);
 //void gameplay(GameState *game);
-void game_init(GameState *game);
+//void game_init(GameState *game);
 
 Card deckDraw(Deck *onoDeck)
 {
@@ -330,32 +330,42 @@ int player_check_hand(Player *player)
 }
 
 
-void player_turn(Player *player, GameState *game)
-{
-    int selected_card = 0;
+void player_turn(int player_index, GameState *game) {
+  Player *P = &game->players[player_index];
+  char *cmd = game->stored_move;
+  char msg[100];
 
-    player_check_hand(player);
-    printf("> Your turn! Select a card (1-%d) or enter 0 to draw: ", player->hand_size);
-    scanf("%d", &selected_card);
+  if (strncmp(cmd, "DRAW", 4) == 0) {
+    printf("> You draw a card...");
+    Card card_drawn = deckDraw(&game->deck);
+    player_add_card(P, card_drawn);
+    //Sending message to game_log
+    snprintf(msg, sizeof(msg), "Player %d drew a card", player_index);
+    enqueue_log(msg);
+  } else if (strncmp(cmd, "MOVE", 4) == 0) {
+    int card_index;
+    // Get the number after cmd "MOVE"
+    if (sscanf(cmd + 5, "%d", &card_index) == 1) {
+      // Since client sends 1-based index, Server need to convert to 0-based
+      int actual_index = card_index - 1;
 
-    while (selected_card > player->hand_size)
-    {
-        printf("> Invalid move, Try again.\n Select a card (1-%d) or enter 0 to draw: ", player->hand_size);
-        scanf("%d", &selected_card);
-    }
+      if (actual_index >= 0 && actual_index < P->hand_size) {
+        // Send the card Details for logging
+        Card *c = &P->hand_cards[actual_index];
+        snprintf(msg, sizeof(msg), "Player %d played %d (%s)", player_index, c->value, get_colour_name(c->colour));
+        enqueue_log(msg);
 
-    if (selected_card == 0)
-    {
-        printf("> You draw a card...");
-        Card card_drawn = deckDraw(&game->deck);
-        player_add_card(player, card_drawn);
+        player_play_card(P, actual_index, game);
+        
+      } else {
+        printf("Error: Player %d tried invalid index %d\n", player_index, card_index);
+        snprintf(msg, sizeof(msg), "Player %d tried invalid play index %d", player_index, card_index);
+        //PENALTY: DRAW A CARD
+        player_add_card(P, deckDraw(&game->deck));
+      }
     }
-    else
-    {
-        printf("> You play a card...");
-        player_play_card(player, selected_card, game);
-    }
-    check_for_uno(player, game);
+  }
+  check_for_uno(P, game);
 }
 
 #endif
