@@ -125,7 +125,6 @@ typedef struct {
 } GameState;
 GameState *shm;
 
-void enqueue_log(char *msg);
 void player_add_card(Player *player, Card new_card);
 void check_for_uno(Player *player, GameState *game);
 void decide_next_player(GameState *game);
@@ -134,7 +133,7 @@ void deckShuffle(Deck *onoDeck);
 bool check_for_winner(Player *player);
 void player_turn(int player_index, GameState *game);
 //void gameplay(GameState *game);
-void game_init(GameState *game);
+//void game_init(GameState *game);
 
 Card deckDraw(Deck *onoDeck)
 {
@@ -331,23 +330,19 @@ int player_check_hand(Player *player)
 }
 
 
-void player_turn(int player_index, GameState *game)
-{
+void player_turn(int player_index, GameState *game) {
   Player *P = &game->players[player_index];
   char *cmd = game->stored_move;
   char msg[100];
 
-  if (strncmp(cmd, "DRAW", 4) == 0)
-  {
+  if (strncmp(cmd, "DRAW", 4) == 0) {
     printf("> You draw a card...");
     Card card_drawn = deckDraw(&game->deck);
     player_add_card(P, card_drawn);
     //Sending message to game_log
     snprintf(msg, sizeof(msg), "Player %d drew a card", player_index);
     enqueue_log(msg);
-  }
-  else if (strncmp(cmd, "MOVE", 4) == 0)
-  {
+  } else if (strncmp(cmd, "MOVE", 4) == 0) {
     int card_index;
     // Get the number after cmd "MOVE"
     if (sscanf(cmd + 5, "%d", &card_index) == 1) {
@@ -811,39 +806,40 @@ int main() {
         while(!shm->game_over){
 
             pthread_mutex_lock(&shm->game_lock);// locks game
-            int player = shm->current_player;     
+            uint8_t player = shm->current_player;     
             pthread_mutex_unlock(&shm->game_lock);// unlocks game
 
             // inform next player of their move
             write(player_pipes[player], "TURN\n", 5); 
 
             pthread_mutex_lock(&shm->game_lock);
-            while(!shm->move_ready){
+            // wait until player finished move + make sure its the same player signaling
+            while(!shm->move_ready || shm->player_move_index != player){
 
-                // wait until player finished move
                 pthread_cond_wait(&shm->turn_cond, &shm->game_lock);
             }
-            pthread_mutex_unlock(&shm->game_lock);// unlocks game
-
             //apply move changes 
             player_turn(player, shm);            
             shm->move_ready = 0;
-
-            pthread_mutex_lock(&shm->game_lock);// locks game
 
             //check for winner, if yes then do update 
             if(check_for_winner(&shm->players[player])){
 
             shm->game_over = true;
             printf("The winner of the game is %s !\n", shm->players[player].player_name);
+            pthread_mutex_unlock(&shm->game_lock);// unlocks game
             break;
 
             }
+            else{
+
+                //updates current player for game 
+                decide_next_player(shm);
+                pthread_mutex_unlock(&shm->game_lock);// unlocks game
+            }
+            
+            enqueue_log("Server shutting down.");
         }
-        //updates current player for game 
-        decide_next_player(shm);
-        pthread_mutex_unlock(&shm->game_lock);// unlocks game
-        enqueue_log("Server shutting down.");
     } else {    
         fprintf(stderr, "Number of players must be between 2 and 5.\n");
         return 1;
