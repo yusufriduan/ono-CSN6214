@@ -17,7 +17,7 @@
 #define LOG_QUEUE_SIZE 50
 #define LOG_MSG_LEN 100
 #define NAME_SIZE 50
-#define START_CARD_DECK 8
+#define START_CARD_DECK 7
 #define JOIN_FIFO "/tmp/join_fifo"
 #define MAX_HAND_SIZE 64
 #define DECK_SIZE 220
@@ -88,16 +88,6 @@ typedef enum GameDirection
     GAME_DIRECTION_RIGHT = 1
 } GameDirection;
 
-typedef struct game
-{
-    Deck deck;
-    Player players[MAX_PLAYERS];
-    Card played_cards[DECK_SIZE];
-    GameDirection gameFlow;
-    uint8_t current_card, current_player, next_player, winner;
-    bool decided_winner;
-} Game;
-
 typedef struct {
     char queue[LOG_QUEUE_SIZE][LOG_MSG_LEN];
     int head; 
@@ -118,6 +108,7 @@ typedef struct {
   LogQueue logger;
   int num_players;
   int current_player;
+  int next_player;
   int winner_pid; // 0 = No winner determined
   int direction; // 1 = Clockwise | 1 == Anti-clockwise
   int game_over;
@@ -127,6 +118,302 @@ typedef struct {
   pthread_cond_t turn_cond;
 } GameState;
 GameState *shm;
+
+void player_add_card(Player *player, Card new_card);
+void check_for_uno(Player *player, GameState *game);
+void decide_next_player(GameState *game);
+void deckInit(Deck *onoDeck);
+void deckShuffle(Deck *onoDeck);
+bool check_for_winner(Player *player);
+void player_turn(Player *player, GameState *game);
+void gameplay(GameState *game);
+void game_init(GameState *game);
+
+Card deckDraw(Deck *onoDeck)
+{
+    if (onoDeck->top_index >= DECK_SIZE)
+    {
+        onoDeck->top_index = 0;
+        deckShuffle(onoDeck);
+    }
+
+    return onoDeck->deckCards[onoDeck->top_index++];
+}
+
+#ifndef CARD
+#define CARD
+
+// cards
+// For displaying cards
+bool playable_card(Card *card, Card *top_card)
+{
+    // Card is playable when
+    // 1. Same value as top card
+    // 2. Same colour as top card
+    // 3. The card is a wild card5
+    // 4. Same card type as top card
+
+
+    // Check if same value
+    if ((card->value != CARD_VALUE_NONE && top_card->value != CARD_VALUE_NONE) && card->value == top_card->value)
+    {
+        return true;
+    }
+
+    // Check for same colour
+    else if (card->colour == top_card->colour || top_card->colour == CARD_COLOUR_BLACK)
+    {
+        return true;
+    }
+
+    // Check for same card type
+    else if ((card->type != CARD_NUMBER_TYPE && top_card->type != CARD_NUMBER_TYPE) && card->type == top_card->type)
+    {
+        return true;
+    }
+
+    // Check for wild cards
+    else if (card->type == CARD_WILD_TYPE)
+    {
+        return true;
+    }
+
+    else
+    {
+        return false;
+    }
+}
+
+const char *get_colour_name(cardColour c)
+{
+    switch (c)
+    {
+    case CARD_COLOUR_RED:
+        return "Red";
+    case CARD_COLOUR_BLUE:
+        return "Blue";
+    case CARD_COLOUR_GREEN:
+        return "Green";
+    case CARD_COLOUR_YELLOW:
+        return "Yellow";
+    case CARD_COLOUR_BLACK:
+        return "Wild";
+    default:
+        return "Unknown";
+    }
+}
+
+void display_card(Card *card)
+{
+    printf("[%d (%s)]", card->value, get_colour_name(card->colour));
+}
+
+void execute_reverse_card(GameState *game)
+{
+    switch (game->direction)
+    {
+    case 1:
+        game->direction = -1;
+        break;
+    case -1:
+        game->direction = 1;
+        break;
+    default:
+        game->direction = 1;
+    }
+}
+
+void execute_skip_card(GameState *game)
+{
+    game->current_player+= game->direction;
+    game->next_player+= game->direction;
+}
+
+void execute_draw_two_card(GameState *game)
+{
+    game->players[game->next_player].hand_cards[game->players[game->next_player].hand_size++] = deckDraw(&game->deck);
+    game->players[game->next_player].hand_cards[game->players[game->next_player].hand_size++] = deckDraw(&game->deck);
+}
+
+void execute_wild_card(GameState *game)
+{
+    uint8_t chosen_colour;
+    printf("> Choose a colour, 1: Red, 2: Blue, 3: Green, 4: Yellow: ");
+    scanf("%hhu", &chosen_colour);
+    switch(chosen_colour){
+        case 1: game->played_cards[game->current_card_idx].colour = CARD_COLOUR_RED; break;
+        case 2: game->played_cards[game->current_card_idx].colour = CARD_COLOUR_BLUE; break;
+        case 3: game->played_cards[game->current_card_idx].colour = CARD_COLOUR_GREEN; break;
+        case 4: game->played_cards[game->current_card_idx].colour = CARD_COLOUR_YELLOW; break;
+        default: printf("Unknown colour picked");
+    }
+}
+
+void execute_wild_card_draw_four(GameState *game)
+{
+    execute_wild_card(game);
+    for(int i = 0; i < 4; i++)
+        game->players[game->next_player].hand_cards[game->players[game->next_player].hand_size++] = deckDraw(&game->deck);
+}
+
+// For when a player plays a power card/wild card
+void execute_card_effect(Card *c, GameState *game)
+{
+    switch (c->value)
+    {
+    case CARD_VALUE_SKIP:
+        execute_skip_card(game);
+        break;
+    case CARD_VALUE_REVERSE:
+        execute_reverse_card(game);
+        break;
+    case CARD_VALUE_DRAW_TWO:
+        execute_draw_two_card(game);
+        break;
+    case CARD_VALUE_WILD:
+        execute_wild_card(game);
+        break;
+    case CARD_VALUE_WILD_DRAW_FOUR:
+        execute_wild_card_draw_four(game);
+        break;
+    default:
+        break;
+    }
+}
+
+#endif // CARD
+
+
+// Jason
+#ifndef PLAYER
+#define PLAYER
+#define MAX_HAND_SIZE 64
+
+void player_init(Player *player, const char *name)
+{
+    strncpy(player->player_name, name, NAME_SIZE - 1); // copy the name given into the player itself
+    player->hand_size = 0;                             // Cards given during start of round
+}
+
+void player_play_card(Player *player, uint8_t card_played, GameState *game)
+{
+    while (!playable_card(&player->hand_cards[card_played], &game->played_cards[game->current_card_idx]))
+    {
+        printf("> Card %d is not a playable card, please pick another card", card_played);
+        int temp_input;
+        scanf("%d", &temp_input);
+        card_played = (uint8_t)temp_input;
+        player_play_card(player, card_played, game);
+        return;
+    }
+    game->played_cards[++game->current_card_idx] = player->hand_cards[player->hand_size - 1];
+    player->hand_size--;
+    printf("> A %d(%s) has been played!", game->played_cards[game->current_card_idx].value, get_colour_name(game->played_cards[game->current_card_idx].colour));
+    execute_card_effect(&game->played_cards[game->current_card_idx], game);
+}
+
+// For displaying the Player's hand
+int player_check_hand(Player *player)
+{
+    for (int i = 0; i < player->hand_size - 1; i++)
+    {
+        Card hand_card = player->hand_cards[i];
+        display_card(&hand_card);
+    }
+    return 0;
+}
+
+
+void player_turn(Player *player, GameState *game)
+{
+    int selected_card = 0;
+
+    player_check_hand(player);
+    printf("> Your turn! Select a card (1-%d) or enter 0 to draw: ", player->hand_size);
+    scanf("%d", &selected_card);
+
+    while (selected_card > player->hand_size)
+    {
+        printf("> Invalid move, Try again.\n Select a card (1-%d) or enter 0 to draw: ", player->hand_size);
+        scanf("%d", &selected_card);
+    }
+
+    if (selected_card == 0)
+    {
+        printf("> You draw a card...");
+        Card card_drawn = deckDraw(&game->deck);
+        player_add_card(player, card_drawn);
+    }
+    else
+    {
+        printf("> You play a card...");
+        player_play_card(player, selected_card, game);
+    }
+    check_for_uno(player, game);
+}
+
+#endif
+
+void check_for_uno(Player *player, GameState *game)
+{   
+    char declared_uno[3];
+    if(player->hand_size == 1){
+        printf("> You are about to win! Type 'Uno' or draw two cards: ");
+        scanf("%s", declared_uno);
+
+        if(strcmp(declared_uno, "uno") != 0){
+            printf("> Uh oh! You didn't say Uno! You'll now draw two cards!");
+            player->hand_cards[player->hand_size++] = deckDraw(&game->deck);
+            player->hand_cards[player->hand_size++] = deckDraw(&game->deck);
+        }
+        else{
+            printf("> Player %d has declared uno!", game->current_player);
+        }
+    }
+}
+
+void gameplay(GameState *game)
+{
+    while (!game->winner_pid)
+    {
+        player_turn(&game->players[game->current_player], game);
+        if (check_for_winner(&game->players[game->current_player]))
+            game->game_over = 1;
+        decide_next_player(game);
+    }
+    printf("{ %s WINS! }\n\n", game->players[game->winner_pid].player_name);
+}
+
+void game_init(GameState *game)
+{
+    deckInit(&game->deck);
+    game->direction = 1;
+    game->current_player = 0;
+    game->current_card_idx = 0;
+    game->next_player = game->current_player + game->direction;
+
+    // Give out 7 cards to each player
+    for (int i = 0; i < MAX_PLAYERS; i++)
+    {
+        for (int j = 0; j < 7; j++)
+        {
+            player_add_card(&game->players[i], deckDraw(&game->deck));
+        }
+    }
+
+    // Play the starting card
+    game->played_cards[0] = deckDraw(&game->deck);
+    while ((game->played_cards[0].type != CARD_NUMBER_TYPE))
+    {
+        deckShuffle(&game->deck);
+        game->played_cards[0] = deckDraw(&game->deck);
+    }
+    game->current_card_idx = 1;
+
+    gameplay(game);
+}
+
+
 
 void deckInit(Deck *onoDeck)
 {
@@ -196,44 +483,7 @@ void deckInit(Deck *onoDeck)
     onoDeck->top_index = 0;
 }
 
-bool playable_card(Card *card, Game* game)
-{
-    // Card is playable when
-    // 1. Same value as top card
-    // 2. Same colour as top card
-    // 3. The card is a wild card5
-    // 4. Same card type as top card
 
-
-    // Check if same value
-    if ((card->value != CARD_VALUE_NONE && game->played_cards[game->current_card].value != CARD_VALUE_NONE) && card->value == game->played_cards[game->current_card].value)
-    {
-        return true;
-    }
-
-    // Check for same colour
-    else if (card->colour == &game->played_cards[game->current_card].colour || &game->played_cards[game->current_card].colour == CARD_COLOUR_BLACK)
-    {
-        return true;
-    }
-
-    // Check for same card type
-    else if ((card->type != CARD_NUMBER_TYPE && game->played_cards[game->current_card].type != CARD_NUMBER_TYPE) && card->type == &game->played_cards[game->current_card].type)
-    {
-        return true;
-    }
-
-    // Check for wild cards
-    else if (card->type == CARD_WILD_TYPE)
-    {
-        return true;
-    }
-
-    else
-    {
-        return false;
-    }
-}
 
 void deckShuffle(Deck *onoDeck)
 {
@@ -247,58 +497,6 @@ void deckShuffle(Deck *onoDeck)
     }
 }
 
-const char *get_colour_name(cardColour c)
-{
-    switch (c)
-    {
-    case CARD_COLOUR_RED:
-        return "Red";
-    case CARD_COLOUR_BLUE:
-        return "Blue";
-    case CARD_COLOUR_GREEN:
-        return "Green";
-    case CARD_COLOUR_YELLOW:
-        return "Yellow";
-    case CARD_COLOUR_BLACK:
-        return "Wild";
-    default:
-        return "Unknown";
-    }
-}
-
-void player_play_card(Player *player, uint8_t card_played, Game *game)
-{
-    while (!playable_card(&player->hand_cards[card_played], &game->played_cards[game->current_card]))
-    {
-        printf("> Card %d is not a playable card, please pick another card", card_played);
-        int temp_input;
-        scanf("%d", &temp_input);
-        card_played = (uint8_t)temp_input;
-        player_play_card(player, card_played, game);
-        return;
-    }
-    game->played_cards[++game->current_card] = player->hand_cards[player->hand_size - 1];
-    player->hand_size--;
-    printf("> A %d(%s) has been played!", game->played_cards[game->current_card].value, get_colour_name(&game->played_cards[game->current_card]));
-    execute_card_effect(&game->played_cards[game->current_card], game);
-}
-
-Card deckDraw(Game* game)
-{
-    if (game->deck.deckCards[game->deck.top_index] >= DECK_SIZE)
-    {
-        game->deck.top_index = 0;
-        deckShuffle(&game->deck);
-    }
-
-    //In the case the drawn card is playable, automatically play it
-    if(playable_card(&game->deck.deckCards[game->deck.top_index], game)){
-        player_play_card(&shm->players[game->current_player], game->deck.top_index, game);
-        return (Card){.value = CARD_VALUE_NONE, .colour = CARD_COLOUR_BLACK, .type = CARD_NUMBER_TYPE};
-    }
-    return game->deck.deckCards[game->deck.top_index++];
-}
-
 void player_add_card(Player *player, Card new_card)
 {
     if (player->hand_size < MAX_HAND_SIZE)
@@ -308,7 +506,7 @@ void player_add_card(Player *player, Card new_card)
     }
 }
 
-bool check_for_winner(Player *player, Game *game)
+bool check_for_winner(Player *player)
 {
     if(player->hand_size == 0){
         shm->winner_pid = player->pid;
@@ -319,7 +517,7 @@ bool check_for_winner(Player *player, Game *game)
 }
 
 
-void decide_next_player(Game *game)
+void decide_next_player(GameState *game)
 {
     if (game->next_player >= MAX_PLAYERS)
     {
@@ -332,7 +530,7 @@ void decide_next_player(Game *game)
     else
     {
         game->current_player = game->next_player;
-        game->next_player += game->gameFlow;
+        game->next_player += game->direction;
     }
 }
 
@@ -535,7 +733,7 @@ int main() {
         deckShuffle(&shm->deck);
         
         for (int i=0; i<num_players; i++){
-            for (int c=0; c<7; c++)
+            for (int c=0; c<START_CARD_DECK; c++)
                 player_add_card(&shm->players[i], deckDraw(&shm->deck));
         }
 
