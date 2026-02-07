@@ -429,7 +429,7 @@ void deckInit(Deck *onoDeck)
     for (int i = 0; i < 4; i++)
     {
         // Number cards (0-9)
-        for (int j = 0; j < 10; i++)
+        for (int j = 0; j < 10; j++)
         {
           // Creating 4 copies of the number card
           for (int k = 0; k < 4; k++) {
@@ -441,7 +441,7 @@ void deckInit(Deck *onoDeck)
         }
 
         // Power cards (Skip [10], Reverse[11], Draw Two[12])
-        for (int l = 10; l < 13; i++)
+        for (int l = 10; l < 13; l++)
         {
             // Ensuring the card is given its correct cardType
             switch (l)
@@ -763,7 +763,7 @@ int main() {
                         // Process Game Move [ELSA PART]
 
                         buffer[n] = '\0'; //convert from bytes to C string 
-                        pthead_mutex_lock(&shm->game_lock); // freeze game state, prevent others from altering
+                        pthread_mutex_lock(&shm->game_lock); // freeze game state, prevent others from altering
 
                         // copy move into gamestate (store the move)
                         strncpy(shm->stored_move, buffer, (sizeof(shm->stored_move)-1)); //minus 1 to exlude '\0'
@@ -811,7 +811,7 @@ int main() {
             pthread_mutex_lock(&shm->game_lock);// locks game
 
             //check for winner, if yes then do update 
-            if(check_for_winner(player, shm)){
+            if(check_for_winner(&shm->players[player])){
 
             shm->game_over = true;
             printf("The winner of the game is %s !", );
@@ -820,7 +820,7 @@ int main() {
             }
         }
         //updates current player for game 
-        decide_next_player((GameState*)shm);
+        decide_next_player(shm);
         pthread_mutex_unlock(&shm->game_lock);// unlocks game
         enqueue_log("Server shutting down.");
     } else {    
