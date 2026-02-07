@@ -116,18 +116,26 @@ typedef struct {
   // Sync prmitives for the Game State
   pthread_mutex_t game_lock;
   pthread_cond_t turn_cond;
+
+  // store player moves (card being played)
+  char stored_move[64];      // input from player is stored
+  int move_ready;          // 0 = not ready, 1 = waiting
+  int player_move_index;  //index of player send
+
 } GameState;
 GameState *shm;
 
+void enqueue_log(char *msg);
+void *logger_thread_func(void *arg);
 void player_add_card(Player *player, Card new_card);
 void check_for_uno(Player *player, GameState *game);
 void decide_next_player(GameState *game);
 void deckInit(Deck *onoDeck);
 void deckShuffle(Deck *onoDeck);
 bool check_for_winner(Player *player);
-void player_turn(Player *player, GameState *game);
-void gameplay(GameState *game);
-void game_init(GameState *game);
+void player_turn(int player_index, GameState *game);
+//void gameplay(GameState *game);
+//void game_init(GameState *game);
 
 Card deckDraw(Deck *onoDeck)
 {
@@ -324,35 +332,64 @@ int player_check_hand(Player *player)
 }
 
 
-void player_turn(Player *player, GameState *game)
-{
-    int selected_card = 0;
+void player_turn(int player_index, GameState *game) {
+  Player *P = &game->players[player_index];
+  char *cmd = game->stored_move;
+  char msg[100];
 
-    player_check_hand(player);
-    printf("> Your turn! Select a card (1-%d) or enter 0 to draw: ", player->hand_size);
-    scanf("%d", &selected_card);
+  if (strncmp(cmd, "DRAW", 4) == 0) {
+    printf("> You draw a card...");
+    Card card_drawn = deckDraw(&game->deck);
+    player_add_card(P, card_drawn);
+    //Sending message to game_log
+    snprintf(msg, sizeof(msg), "Player %d drew a card", player_index);
+    enqueue_log(msg);
+  } else if (strncmp(cmd, "MOVE", 4) == 0) {
+    int card_index;
+    // Get the number after cmd "MOVE"
+    if (sscanf(cmd + 5, "%d", &card_index) == 1) {
+      // Since client sends 1-based index, Server need to convert to 0-based
+      int actual_index = card_index - 1;
 
-    while (selected_card > player->hand_size)
-    {
-        printf("> Invalid move, Try again.\n Select a card (1-%d) or enter 0 to draw: ", player->hand_size);
-        scanf("%d", &selected_card);
-    }
+      if (actual_index >= 0 && actual_index < P->hand_size) {
+        // Send the card Details for logging
+        Card *c = &P->hand_cards[actual_index];
+        snprintf(msg, sizeof(msg), "Player %d played %d (%s)", player_index, c->value, get_colour_name(c->colour));
+        enqueue_log(msg);
 
-    if (selected_card == 0)
-    {
-        printf("> You draw a card...");
-        Card card_drawn = deckDraw(&game->deck);
-        player_add_card(player, card_drawn);
+        player_play_card(P, actual_index, game);
+        
+      } else {
+        printf("Error: Player %d tried invalid index %d\n", player_index, card_index);
+        snprintf(msg, sizeof(msg), "Player %d tried invalid play index %d", player_index, card_index);
+        //PENALTY: DRAW A CARD
+        player_add_card(P, deckDraw(&game->deck));
+      }
     }
-    else
-    {
-        printf("> You play a card...");
-        player_play_card(player, selected_card, game);
-    }
-    check_for_uno(player, game);
+  }
+  check_for_uno(P, game);
 }
 
 #endif
+
+void format_card_to_string(Card *c, char *buffer) {
+    const char *colour = get_colour_name(c->colour);
+
+    if (c->type == CARD_NUMBER_TYPE) {
+        sprintf(buffer, "%d (%s)", c->value, colour);
+    } else {
+        const char *type_str;
+        switch (c->type) {
+            case CARD_SKIP_TYPE: type_str = "SKIP"; break;
+            case CARD_REVERSE_TYPE: type_str = "REVERSE"; break;
+            case CARD_DRAW_TWO_TYPE: type_str = "DRAW TWO"; break;
+            case CARD_WILD_TYPE: type_str = "WILD"; break;
+            case CARD_WILD_DRAW_FOUR_TYPE: type_str = "WILD DRAW FOUR"; break;
+            default: type_str = "UNKNOWN"; break;
+        }
+        sprintf(buffer, "%s %s", type_str, colour);
+    }
+}
 
 void check_for_uno(Player *player, GameState *game)
 {   
@@ -372,46 +409,46 @@ void check_for_uno(Player *player, GameState *game)
     }
 }
 
-void gameplay(GameState *game)
-{
-    while (!game->winner_pid)
-    {
-        player_turn(&game->players[game->current_player], game);
-        if (check_for_winner(&game->players[game->current_player]))
-            game->game_over = 1;
-        decide_next_player(game);
-    }
-    printf("{ %s WINS! }\n\n", game->players[game->winner_pid].player_name);
-}
+// void gameplay(GameState *game)
+// {
+//     while (!game->winner_pid)
+//     {
+//         player_turn(&game->players[game->current_player], game);
+//         if (check_for_winner(&game->players[game->current_player]))
+//             game->game_over = 1;
+//         decide_next_player(game);
+//     }
+//     printf("{ %s WINS! }\n\n", game->players[game->winner_pid].player_name);
+// }
 
-void game_init(GameState *game)
-{
-    deckInit(&game->deck);
-    game->direction = 1;
-    game->current_player = 0;
-    game->current_card_idx = 0;
-    game->next_player = game->current_player + game->direction;
+// void game_init(GameState *game)
+// {
+//     deckInit(&game->deck);
+//     game->direction = 1;
+//     game->current_player = 0;
+//     game->current_card_idx = 0;
+//     game->next_player = game->current_player + game->direction;
 
-    // Give out 7 cards to each player
-    for (int i = 0; i < MAX_PLAYERS; i++)
-    {
-        for (int j = 0; j < 7; j++)
-        {
-            player_add_card(&game->players[i], deckDraw(&game->deck));
-        }
-    }
+//     // Give out 7 cards to each player
+//     for (int i = 0; i < MAX_PLAYERS; i++)
+//     {
+//         for (int j = 0; j < 7; j++)
+//         {
+//             player_add_card(&game->players[i], deckDraw(&game->deck));
+//         }
+//     }
 
-    // Play the starting card
-    game->played_cards[0] = deckDraw(&game->deck);
-    while ((game->played_cards[0].type != CARD_NUMBER_TYPE))
-    {
-        deckShuffle(&game->deck);
-        game->played_cards[0] = deckDraw(&game->deck);
-    }
-    game->current_card_idx = 1;
+//     // Play the starting card
+//     game->played_cards[0] = deckDraw(&game->deck);
+//     while ((game->played_cards[0].type != CARD_NUMBER_TYPE))
+//     {
+//         deckShuffle(&game->deck);
+//         game->played_cards[0] = deckDraw(&game->deck);
+//     }
+//     game->current_card_idx = 1;
 
-    gameplay(game);
-}
+//     //gameplay(game);
+// }
 
 
 
@@ -423,7 +460,7 @@ void deckInit(Deck *onoDeck)
     for (int i = 0; i < 4; i++)
     {
         // Number cards (0-9)
-        for (int j = 0; j < 10; i++)
+        for (int j = 0; j < 10; j++)
         {
           // Creating 4 copies of the number card
           for (int k = 0; k < 4; k++) {
@@ -435,7 +472,7 @@ void deckInit(Deck *onoDeck)
         }
 
         // Power cards (Skip [10], Reverse[11], Draw Two[12])
-        for (int l = 10; l < 13; i++)
+        for (int l = 10; l < 13; l++)
         {
             // Ensuring the card is given its correct cardType
             switch (l)
@@ -606,6 +643,37 @@ void handle_disconnect(int player_index, char *player_name, int fd) {
     exit(0);
 }
 
+void update_player_client(int player_index, int pipe_fd) {
+    char msg[1024] = {0};
+    char card_str[50];
+
+    // Send top card on pile
+    Card *top_card = &shm->played_cards[shm->current_card_idx];
+    format_card_to_string(top_card, card_str);
+
+    strcat(msg, "PILE:");
+    strcat(msg, card_str);
+    strcat(msg, "\n");
+
+    // Send player's hand
+    strcat(msg, "HAND:");
+    Player *P = &shm->players[player_index];
+
+    for (int i = 0; i < P->hand_size; i++) {
+        format_card_to_string(&P->hand_cards[i], card_str);
+        strcat(msg, card_str);
+
+        // Add comma if not the last card
+        if (i < P->hand_size - 1) {
+            strcat(msg, ",");
+        }
+    }
+    strcat(msg, "\n");
+
+    // Send the message to the player
+    write(pipe_fd, msg, strlen(msg));
+}
+
 // Game starts
 int main() {
     int num_players = 0;
@@ -723,6 +791,12 @@ int main() {
     printf("\033[2J\033[H");
     fflush(stdout);
 
+    // initialize game state
+    shm->direction = 1;
+    shm->current_player = 0;
+    shm->current_card_idx = 0;
+    shm->next_player = shm->current_player + shm->direction;
+
     if (num_players > 1 && num_players < 6) {
         printf("Game starting with %d players!\n", num_players);
         for (int i = 0; i < num_players; i++) {
@@ -754,21 +828,69 @@ int main() {
                     int n = read(player_fd, buffer, sizeof(buffer));
 
                     if (n > 0) {
-                        // Process Game Move, Determine winner [ELSA PART]
+                        // Process Game Move [ELSA PART]
+
+                        buffer[n] = '\0'; //convert from bytes to C string 
+                        pthread_mutex_lock(&shm->game_lock); // freeze game state, prevent others from altering
+
+                        // copy move into gamestate (store the move)
+                        strncpy(shm->stored_move, buffer, (sizeof(shm->stored_move)-1)); //minus 1 to exlude '\0'
+
+                        shm->move_ready = 1; // ready for next player's move 
+                        shm->player_move_index = i; // updates the player who sent the moves
+
+                        pthread_cond_signal(&shm->turn_cond); // wake up parent process
+                        pthread_mutex_unlock(&shm->game_lock); // unfreeze gamestate, allow others to alter
+
                     } else if (n == 0) {
                         handle_disconnect(i, player_names[i], player_fd);
                     }
                 }
                 exit(0);
-            } else {
-                if (player_pipes[i] != -1)
-                    close(player_pipes[i]);
-            }            
+            }
         }
+        // Round Robin Scheduler, Parent Process [ELSA PART] 
+        // Check winner
 
-        // Round Robin Scheduler, Parent Process [ELSA PART]
+        while(!shm->game_over){
 
-        enqueue_log("Server shutting down.");
+            pthread_mutex_lock(&shm->game_lock);// locks game
+            uint8_t player = shm->current_player;     
+            pthread_mutex_unlock(&shm->game_lock);// unlocks game
+
+            update_player_client(player, player_pipes[player]);
+
+            // inform next player of their move
+            write(player_pipes[player], "TURN\n", 5); 
+
+            pthread_mutex_lock(&shm->game_lock);
+            // wait until player finished move + make sure its the same player signaling
+            while(!shm->move_ready || shm->player_move_index != player){
+
+                pthread_cond_wait(&shm->turn_cond, &shm->game_lock);
+            }
+            //apply move changes 
+            player_turn(player, shm);            
+            shm->move_ready = 0;
+
+            //check for winner, if yes then do update 
+            if(check_for_winner(&shm->players[player])){
+
+            shm->game_over = true;
+            printf("The winner of the game is %s !\n", shm->players[player].player_name);
+            pthread_mutex_unlock(&shm->game_lock);// unlocks game
+            break;
+
+            }
+            else{
+
+                //updates current player for game 
+                decide_next_player(shm);
+                pthread_mutex_unlock(&shm->game_lock);// unlocks game
+            }
+            
+            enqueue_log("Server shutting down.");
+        }
     } else {    
         fprintf(stderr, "Number of players must be between 2 and 5.\n");
         return 1;
@@ -777,5 +899,4 @@ int main() {
     pthread_join(log_tid, NULL);
     return 0;
 }
-
 

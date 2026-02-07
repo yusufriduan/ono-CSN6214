@@ -22,6 +22,52 @@ int is_turn_msg(const char *msg)
     return (strstr(msg, "TURN") != NULL) || (strstr(msg, "Your turn") != NULL);
 }
 
+static void show_top(const char *line) {
+    // line e.g. : "PILE: RED 5"
+    const char *p = strstr(line, "PILE:");
+    if (!p) return;
+    p += 5; // skip "PILE:"
+    while (*p == ' ') p++;
+
+    printf("\n=== Pile Card ===\n");
+    // Create a temporary buffer to print ONLY the current line
+    char card_text[64];
+    size_t len = strcspn(p, "\n"); // Calculate length until the next newline
+    if (len >= sizeof(card_text)) len = sizeof(card_text) - 1;
+    
+    strncpy(card_text, p, len);
+    card_text[len] = '\0'; // Ensure null-termination
+
+    printf("%s\n", card_text);
+}
+
+static void show_hand(const char *line) {
+    // line e.g. : "HAND: RED 3, BLUE SKIP, GREEN 9"
+    const char *p = strstr(line, "HAND:");
+    if (!p) return;
+    p += 5; // skip "HAND:"
+    while (*p == ' ') p++;
+
+    printf("\n=== Your Hand ===\n");
+
+    // Make a copy so strtok doesn't destroy original buffer
+    char temp[MAX_BUFFER];
+    snprintf(temp, sizeof(temp), "%s", p);
+
+    int idx = 1;
+    char *token = strtok(temp, ",");
+    while (token != NULL) {
+        while (*token == ' ') token++;   // skip leading spaces
+        printf("%d) %s\n", idx++, token);
+        token = strtok(NULL, ",");
+    }
+}
+
+static void game_display(const char *msg) {
+    // Calling both. If msg doesn't contain PILE/HAND it just prints nothing extra.
+    show_top(msg);
+    show_hand(msg);
+}
 
 int main() {
     // Server initialization
@@ -109,11 +155,21 @@ int main() {
     {
         memset(buffer, 0, sizeof(buffer));
         int bytes_read = read(my_fd, buffer, sizeof(buffer) - 1);
+
+        if (bytes_read == 0) {
+            printf("Server disconnected.\n");
+            break;
+        }
+        if (bytes_read < 0) {
+            perror("read");
+            break;
+        }
         buffer[bytes_read] = '\0';
         
         if (bytes_read > 0) {
             // Received data from server!
-            printf("[Server]: %s\n", buffer);
+            // printf("[Server]: %s\n", buffer);
+            game_display(buffer);
 
             // Check for game over
             if (strstr(buffer, "GAME_OVER"))
@@ -121,7 +177,6 @@ int main() {
 
             if (is_turn_msg(buffer))
             {
-
                 char move[128];
 
                 printf("Your move (move <something> / draw / quit): ");
