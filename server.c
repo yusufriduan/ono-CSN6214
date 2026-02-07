@@ -125,6 +125,8 @@ typedef struct {
 } GameState;
 GameState *shm;
 
+void enqueue_log(char *msg);
+void *logger_thread_func(void *arg);
 void player_add_card(Player *player, Card new_card);
 void check_for_uno(Player *player, GameState *game);
 void decide_next_player(GameState *game);
