@@ -803,32 +803,33 @@ int main() {
             write(player_pipes[player], "TURN\n", 5); 
 
             pthread_mutex_lock(&shm->game_lock);
-            while(!shm->move_ready){
+            // wait until player finished move + make sure its the same player signaling
+            while(!shm->move_ready || shm->player_move_index != player){
 
-                // wait until player finished move
                 pthread_cond_wait(&shm->turn_cond, &shm->game_lock);
             }
-            pthread_mutex_unlock(&shm->game_lock);// unlocks game
-
             //apply move changes 
             player_turn(player, shm);            
             shm->move_ready = 0;
-
-            pthread_mutex_lock(&shm->game_lock);// locks game
 
             //check for winner, if yes then do update 
             if(check_for_winner(&shm->players[player])){
 
             shm->game_over = true;
             printf("The winner of the game is %s !\n", shm->players[player].player_name);
+            pthread_mutex_unlock(&shm->game_lock);// unlocks game
             break;
 
             }
+            else{
+
+                //updates current player for game 
+                decide_next_player(shm);
+                pthread_mutex_unlock(&shm->game_lock);// unlocks game
+            }
+            
+            enqueue_log("Server shutting down.");
         }
-        //updates current player for game 
-        decide_next_player(shm);
-        pthread_mutex_unlock(&shm->game_lock);// unlocks game
-        enqueue_log("Server shutting down.");
     } else {    
         fprintf(stderr, "Number of players must be between 2 and 5.\n");
         return 1;
