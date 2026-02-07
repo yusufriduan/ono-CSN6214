@@ -797,10 +797,7 @@ int main() {
                     }
                 }
                 exit(0);
-            } else {
-                if (player_pipes[i] != -1)
-                    close(player_pipes[i]);
-            }            
+            }
         }
         // Round Robin Scheduler, Parent Process [ELSA PART] 
         // Check winner
