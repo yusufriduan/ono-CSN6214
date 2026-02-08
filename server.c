@@ -338,8 +338,8 @@ bool player_turn(int player_index, GameState *game) {
     Card card_drawn = deckDraw(&game->deck);
     player_add_card(P, card_drawn);
 
-    //Sending message to game_log
-    snprintf(msg, sizeof(msg), "Player %d drew a card", player_index);
+    //Sending message to game.log
+    snprintf(msg, sizeof(msg), "Player %s drew a card", P->player_name);
     enqueue_log(msg);
     return true;
   } else if (strncmp(cmd, "MOVE", 4) == 0) {
@@ -366,7 +366,7 @@ bool player_turn(int player_index, GameState *game) {
         {
             // Send the card Details for logging
             Card *c = &P->hand_cards[actual_index];
-            snprintf(msg, sizeof(msg), "Player %d played %d (%s)", player_index, c->value, get_colour_name(c->colour));
+            snprintf(msg, sizeof(msg), "Player %s played %d (%s)", P->player_name, c->value, get_colour_name(c->colour));
             enqueue_log(msg);
 
             check_for_uno(P, game, uno_declaration);
@@ -378,7 +378,7 @@ bool player_turn(int player_index, GameState *game) {
     
     } else {
     printf("Error: Player %d tried invalid index %d\n", player_index, card_index);
-    snprintf(msg, sizeof(msg), "Player %d tried invalid play index %d", player_index, card_index);
+    snprintf(msg, sizeof(msg), "Player %s tried invalid play index %d", P->player_name, card_index);
     enqueue_log(msg);
 
     //PENALTY: DRAW A CARD
@@ -423,49 +423,6 @@ void check_for_uno(Player *player, GameState *game, int uno_declaration){
         }
     }
 }
-
-// void gameplay(GameState *game)
-// {
-//     while (!game->winner_pid)
-//     {
-//         player_turn(&game->players[game->current_player], game);
-//         if (check_for_winner(&game->players[game->current_player]))
-//             game->game_over = 1;
-//         decide_next_player(game);
-//     }
-//     printf("{ %s WINS! }\n\n", game->players[game->winner_pid].player_name);
-// }
-
-// void game_init(GameState *game)
-// {
-//     deckInit(&game->deck);
-//     game->direction = 1;
-//     game->current_player = 0;
-//     game->current_card_idx = 0;
-//     game->next_player = game->current_player + game->direction;
-
-//     // Give out 7 cards to each player
-//     for (int i = 0; i < MAX_PLAYERS; i++)
-//     {
-//         for (int j = 0; j < 7; j++)
-//         {
-//             player_add_card(&game->players[i], deckDraw(&game->deck));
-//         }
-//     }
-
-//     // Play the starting card
-//     game->played_cards[0] = deckDraw(&game->deck);
-//     while ((game->played_cards[0].type != CARD_NUMBER_TYPE))
-//     {
-//         deckShuffle(&game->deck);
-//         game->played_cards[0] = deckDraw(&game->deck);
-//     }
-//     game->current_card_idx = 1;
-
-//     //gameplay(game);
-// }
-
-
 
 void deckInit(Deck *onoDeck)
 {
@@ -593,10 +550,14 @@ void decide_next_player(GameState *game)
 // Pass logging mechanism
 void enqueue_log(char *msg) {
     time_t now = time(NULL);
-    struct tm *t = localtime(&now);
+
+    struct tm t;
+    localtime_r(&now, &t);
+
     char timed_msg[LOG_MSG_LEN];
 
-    int time_len = strftime(timed_msg, LOG_MSG_LEN, "[%H:%M:%S] ", t);
+    int time_len = strftime(timed_msg, LOG_MSG_LEN, "[%H:%M:%S] ", &t);
+    
     snprintf(timed_msg + time_len, LOG_MSG_LEN - time_len, "%s", msg);
 
     sem_wait(&shm->logger.space_left);
@@ -615,7 +576,7 @@ void enqueue_log(char *msg) {
 void *logger_thread_func(void *arg) {
     LogQueue *lq = (LogQueue *)arg;
 
-    FILE *fp = fopen("game_log", "a");
+    FILE *fp = fopen("game.log", "a");
     if (!fp) {
         perror("Logger failed to open file");
         pthread_exit(NULL);
@@ -737,7 +698,22 @@ void save_scores(GameState *game) {
     fclose(fp);
     printf("Scores saved to scores.txt\n");
 }
+// function to clean up child processes of disconnected players
+void reap_child_processes(Player *player) {
+    
 
+    pid_t check = waitpid(player->pid, NULL, WNOHANG);
+
+         if(check > 0){
+            char log_msg[LOG_MSG_LEN];
+            snprintf(log_msg, LOG_MSG_LEN, "Child %s with PID of %d has been reaped after disconnection.", player->player_name, player->pid);
+            enqueue_log(log_msg);
+        }
+        else if(check == -1){
+            perror("reaping child process failed");
+        }
+}
+        
 // Game starts
 int main() {
     signal(SIGPIPE, SIG_IGN); // Ignore SIGPIPE to prevent crashes on broken pipes
@@ -954,6 +930,15 @@ int main() {
             //apply move changes 
             bool success = player_turn(player, shm);
             shm->move_ready = 0;
+            
+
+            if(!shm->players[player].is_active){
+                pthread_mutex_unlock(&shm->game_lock);  
+                //reap child processes if any players disconnected
+                reap_child_processes(&shm->players[player]);
+                pthread_mutex_lock(&shm->game_lock);  
+            }
+ 
 
             if (success) {
                 if (check_for_winner(&shm->players[player])) {
@@ -988,6 +973,11 @@ int main() {
 
     printf("Game over! Winner PID: %d\n", shm->winner_pid);
     save_scores(shm);
+
+    // Clean up the remaining child processes
+    for(int i = 0; i < num_players; i++){
+        reap_child_processes(&shm->players[i]);
+    }
 
     enqueue_log("SERVER_SHUTDOWN");
     pthread_join(log_tid, NULL);
