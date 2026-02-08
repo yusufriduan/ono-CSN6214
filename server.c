@@ -99,7 +99,6 @@ typedef struct {
     pthread_mutex_t lock;
 } LogQueue;
 
-
 typedef struct {
   Deck deck;
   Player players[MAX_PLAYERS];
@@ -120,8 +119,8 @@ typedef struct {
 
   // store player moves (card being played)
   char stored_move[64];      // input from player is stored
-  int move_ready;          // 0 = not ready, 1 = waiting
-  int player_move_index;  //index of player send
+  int move_ready;           // 0 = not ready, 1 = waiting
+  int player_move_index;   //index of player send
 
 } GameState;
 GameState *shm;
@@ -138,8 +137,6 @@ void execute_wild_card(GameState *game, int wild_colour);
 bool check_for_winner(Player *player);
 bool player_turn(int player_index, GameState *game);
 bool player_play_card(Player *player, uint8_t card_played, GameState *game, int wild_colour);
-//void gameplay(GameState *game);
-//void game_init(GameState *game);
 
 Card deckDraw(Deck *onoDeck)
 {
@@ -155,7 +152,6 @@ Card deckDraw(Deck *onoDeck)
 #ifndef CARD
 #define CARD
 
-// cards
 // For displaying cards
 bool playable_card(Card *card, Card *top_card)
 {
@@ -164,7 +160,6 @@ bool playable_card(Card *card, Card *top_card)
     // 2. Same colour as top card
     // 3. The card is a wild card5
     // 4. Same card type as top card
-
 
     // Check if same value
     if ((card->value != CARD_VALUE_NONE && top_card->value != CARD_VALUE_NONE) && card->value == top_card->value)
@@ -285,7 +280,6 @@ void execute_card_effect(Card *c, GameState *game, int wild_colour)
 
 #endif // CARD
 
-
 // Jason
 #ifndef PLAYER
 #define PLAYER
@@ -326,7 +320,6 @@ int player_check_hand(Player *player)
     }
     return 0;
 }
-
 
 bool player_turn(int player_index, GameState *game) {
   Player *P = &game->players[player_index];
@@ -492,8 +485,6 @@ void deckInit(Deck *onoDeck)
     onoDeck->top_index = 0;
 }
 
-
-
 void deckShuffle(Deck *onoDeck)
 {
     // Random Number Generator Seed
@@ -524,7 +515,6 @@ bool check_for_winner(Player *player)
     }
   return false;
 }
-
 
 void decide_next_player(GameState *game)
 {
@@ -701,17 +691,16 @@ void save_scores(GameState *game) {
 // function to clean up child processes of disconnected players
 void reap_child_processes(Player *player) {
     
-
     pid_t check = waitpid(player->pid, NULL, WNOHANG);
 
-         if(check > 0){
-            char log_msg[LOG_MSG_LEN];
-            snprintf(log_msg, LOG_MSG_LEN, "Child %s with PID of %d has been reaped after disconnection.", player->player_name, player->pid);
-            enqueue_log(log_msg);
+    if(check > 0){
+        char log_msg[LOG_MSG_LEN];
+        snprintf(log_msg, LOG_MSG_LEN, "Child %s with PID of %d has been reaped after disconnection.", player->player_name, player->pid);
+        enqueue_log(log_msg);
         }
-        else if(check == -1){
-            perror("reaping child process failed");
-        }
+    else if(check == -1){
+        perror("reaping child process failed");
+    }
 }
         
 // Game starts
@@ -939,7 +928,6 @@ int main() {
                 pthread_mutex_lock(&shm->game_lock);  
             }
  
-
             if (success) {
                 if (check_for_winner(&shm->players[player])) {
                     shm->game_over = true;
