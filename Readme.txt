@@ -30,7 +30,7 @@ Step 1: Start the Server
    $ ./server
 
 Step 2: Start Clients (Players)
-   Open separate terminals for each player (minimum 3, maximum 5).
+   Open separate terminals for each player (minimum 2, maximum 5).
    $ ./client
 
    Follow the on-screen prompts to enter your player name.
@@ -39,7 +39,9 @@ Step 2: Start Clients (Players)
    > Joined the game as Alice
 
 Step 3: Play the Game:
-   Once 3 to 5 players have joined and the countdown finishes, the game begins.
+   Once 2 to 5 players have joined and the countdown finishes, the game begins.
+
+   The move pile will be displayed, as well as their own player's hand on their own specific terminal.
    Use the following commands in the client terminal.
 
    For Basic Moves,
@@ -52,12 +54,12 @@ Step 3: Play the Game:
    - Quit game:        quit
 
    For Advanced Moves:
-   - Play Wild Card:   move <card_index> <colour>
+   - Play Wild Card (red/blue/green/yellow):   move <card_index> <colour>
    Example: move 3 blue (Plays third card on their deck and sets the colour blue)
    Example: move 6 green (Plays sixth card on their deck and sets the colour green)
 
    - Declare uno:      move <card_index> uno
-   Example: move 7 uno (Plays seventh card on their deck and declares uno)
+   Example: move 2 uno (Plays second card on their deck and declares uno)
    Note: You need to declare uno on your second last move or else it will draw 2 cards
 
 --------------------------------------------------------------------------------
@@ -84,8 +86,8 @@ Objective:
 Be the first player to get rid of all your cards.
 
 Setup:
-- The game supports 3 to 5 players.
-- Each player starts with 8 cards.
+- The game supports 2 to 5 players.
+- Each player starts with 7 cards.
 
 Gameplay Rules:
 1. Matching: On your turn, you must match the top card of the discard pile 
@@ -104,7 +106,7 @@ Gameplay Rules:
    - When a player wins, the game ends.
    - Scores are calculated based on cards remaining in opponents' hands.
    - Results are saved to 'scores.txt'.
-   - Detailed game events are logged to 'game_log'.
+   - Detailed game events are logged to 'game.log'.
 
 --------------------------------------------------------------------------------
 5. CLEANUP
