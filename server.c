@@ -15,6 +15,9 @@
 #include <stdbool.h>
 #include <signal.h>
 
+// implement a global flag to show server is running
+volatile sig_atomic_t server_running = 1;
+
 #define LOG_QUEUE_SIZE 50
 #define LOG_MSG_LEN 100
 #define NAME_SIZE 50
@@ -125,6 +128,7 @@ typedef struct {
 } GameState;
 GameState *shm;
 
+void signal_handler(int sig);
 void enqueue_log(char *msg);
 void *logger_thread_func(void *arg);
 void player_add_card(Player *player, Card new_card);
@@ -137,6 +141,13 @@ void execute_wild_card(GameState *game, int wild_colour);
 bool check_for_winner(Player *player);
 bool player_turn(int player_index, GameState *game);
 bool player_play_card(Player *player, uint8_t card_played, GameState *game, int wild_colour);
+void reap_child_processes(Player *player);
+
+void signal_handler(int signal){
+
+    (void)signal; // avoiding parameter warning by casting to void
+    server_running = 0;
+}
 
 Card deckDraw(Deck *onoDeck)
 {
@@ -705,6 +716,7 @@ void reap_child_processes(Player *player) {
         
 // Game starts
 int main() {
+    signal(SIGINT, signal_handler); // handles server shutdown via Ctrl+C
     signal(SIGPIPE, SIG_IGN); // Ignore SIGPIPE to prevent crashes on broken pipes
     int num_players = 0;
     int countdown = 60;
@@ -882,7 +894,7 @@ int main() {
         // Round Robin Scheduler, Parent Process [ELSA PART] 
         // Check winner
 
-        while(!shm->game_over){
+        while(!shm->game_over && server_running) {
 
             pthread_mutex_lock(&shm->game_lock);// locks game
             uint8_t player = shm->current_player;     
@@ -961,11 +973,27 @@ int main() {
 
     printf("Game over! Winner PID: %d\n", shm->winner_pid);
     save_scores(shm);
+    
+    // Close all player pipes 
+    for(int i = 0; i < num_players; i ++){
+        
+        bool check = player_pipes[i] != -1;
+        if(check){
+            close(player_pipes[i]);
+            // set the player pipes to -1 to show it is closed
+            player_pipes[i] = -1;
+        }
+    }
 
     // Clean up the remaining child processes
     for(int i = 0; i < num_players; i++){
         reap_child_processes(&shm->players[i]);
     }
+
+    // clean up shared memory 
+    if(munmap(shm, sizeof(GameState)) == -1){
+        perror("freeing shared memory failed");
+    }   
 
     enqueue_log("SERVER_SHUTDOWN");
     pthread_join(log_tid, NULL);
