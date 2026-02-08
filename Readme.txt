@@ -76,6 +76,7 @@ communication between the server process and client processes.
 - Server uses pthreads for the concurrent Logger and Round Robin Scheduler.
 - Shared Memory (mmap) is used to store the Game State accessible by all processes.
 - Signal Handling (SIGPIPE) is used to prevent server crashes when the client disconnects.
+- Signal handling (SIGINT) is used to shut down server.
 
 --------------------------------------------------------------------------------
 4. GAME RULES SUMMARY
@@ -108,6 +109,8 @@ Gameplay Rules:
    - Results are saved to 'scores.txt'.
    - Detailed game events are logged to 'game.log'.
 
+Note: Once the gameplay ends, and the winner is decided, 
+the user must shut down the terminal instance by using Ctrl+c.
 --------------------------------------------------------------------------------
 5. CLEANUP
 --------------------------------------------------------------------------------
