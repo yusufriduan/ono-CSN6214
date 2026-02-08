@@ -357,8 +357,9 @@ bool player_turn(int player_index, GameState *game) {
 
         if (move_successful)
         {
-            // Send the card Details for logging
             Card *c = &P->hand_cards[actual_index];
+            printf("> Player %s played card %d (%s)\n", P->player_name, c->value, get_colour_name(c->colour));
+            // Send the card Details for logging
             snprintf(msg, sizeof(msg), "Player %s played %d (%s)", P->player_name, c->value, get_colour_name(c->colour));
             enqueue_log(msg);
 
@@ -370,8 +371,10 @@ bool player_turn(int player_index, GameState *game) {
         
     
     } else {
-    printf("Error: Player %d tried invalid index %d\n", player_index, card_index);
-    snprintf(msg, sizeof(msg), "Player %s tried invalid play index %d", P->player_name, card_index);
+    Card *c = &P->hand_cards[actual_index];
+    printf("Error: Player %s tried invalid index %d (%s)\n", P->player_name, c->value, get_colour_name(c->colour));
+    //Sending message to game.log
+    snprintf(msg, sizeof(msg), "Player %s tried invalid play index %d (%s)", P->player_name, c->value, get_colour_name(c->colour));
     enqueue_log(msg);
 
     //PENALTY: DRAW A CARD
