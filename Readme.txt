@@ -100,7 +100,7 @@ Gameplay Rules:
    - Reverse: Reverses the order of play.
    - Draw Two: The next player must draw 2 cards and loses their turn.
    - Wild: Change the color of play (Red, Blue, Green, Yellow).
-   - Wild Draw Four: Change the color, next player draws 4 cards and loses turn.
+   - Wild Draw Four: Change the color, next player draws 4 cards continues their turn.
 4. Uno Rule: A player must declare "uno" when they are down to one card. 
    Failure to do so results in a penalty of drawing 2 cards.
 5. Scoring:
