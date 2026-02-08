@@ -13,6 +13,7 @@
 #include <sys/mman.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <signal.h>
 
 #define LOG_QUEUE_SIZE 50
 #define LOG_MSG_LEN 100
@@ -98,7 +99,6 @@ typedef struct {
     pthread_mutex_t lock;
 } LogQueue;
 
-
 typedef struct {
   Deck deck;
   Player players[MAX_PLAYERS];
@@ -119,8 +119,8 @@ typedef struct {
 
   // store player moves (card being played)
   char stored_move[64];      // input from player is stored
-  int move_ready;          // 0 = not ready, 1 = waiting
-  int player_move_index;  //index of player send
+  int move_ready;           // 0 = not ready, 1 = waiting
+  int player_move_index;   //index of player send
 
 } GameState;
 GameState *shm;
@@ -128,14 +128,15 @@ GameState *shm;
 void enqueue_log(char *msg);
 void *logger_thread_func(void *arg);
 void player_add_card(Player *player, Card new_card);
-void check_for_uno(Player *player, GameState *game);
+void check_for_uno(Player *player, GameState *game, int uno_declaration);
 void decide_next_player(GameState *game);
 void deckInit(Deck *onoDeck);
 void deckShuffle(Deck *onoDeck);
+void execute_card_effect(Card *c, GameState *game, int wild_colour);
+void execute_wild_card(GameState *game, int wild_colour);
 bool check_for_winner(Player *player);
-void player_turn(int player_index, GameState *game);
-//void gameplay(GameState *game);
-//void game_init(GameState *game);
+bool player_turn(int player_index, GameState *game);
+bool player_play_card(Player *player, uint8_t card_played, GameState *game, int wild_colour);
 
 Card deckDraw(Deck *onoDeck)
 {
@@ -151,7 +152,6 @@ Card deckDraw(Deck *onoDeck)
 #ifndef CARD
 #define CARD
 
-// cards
 // For displaying cards
 bool playable_card(Card *card, Card *top_card)
 {
@@ -160,7 +160,6 @@ bool playable_card(Card *card, Card *top_card)
     // 2. Same colour as top card
     // 3. The card is a wild card5
     // 4. Same card type as top card
-
 
     // Check if same value
     if ((card->value != CARD_VALUE_NONE && top_card->value != CARD_VALUE_NONE) && card->value == top_card->value)
@@ -181,7 +180,7 @@ bool playable_card(Card *card, Card *top_card)
     }
 
     // Check for wild cards
-    else if (card->type == CARD_WILD_TYPE)
+    else if (card->type == CARD_WILD_TYPE || card->type == CARD_WILD_DRAW_FOUR_TYPE)
     {
         return true;
     }
@@ -218,54 +217,40 @@ void display_card(Card *card)
 
 void execute_reverse_card(GameState *game)
 {
-    switch (game->direction)
-    {
-    case 1:
-        game->direction = -1;
-        break;
-    case -1:
-        game->direction = 1;
-        break;
-    default:
-        game->direction = 1;
-    }
+    game->direction *= -1;
+
+    int n = game->num_players;
+    game->next_player = (game->current_player + game->direction + n) % n;
 }
 
 void execute_skip_card(GameState *game)
 {
-    game->current_player+= game->direction;
-    game->next_player+= game->direction;
+    int n = game->num_players;
+    game->next_player = (game->next_player + game->direction + n) % n;
 }
 
 void execute_draw_two_card(GameState *game)
 {
     game->players[game->next_player].hand_cards[game->players[game->next_player].hand_size++] = deckDraw(&game->deck);
     game->players[game->next_player].hand_cards[game->players[game->next_player].hand_size++] = deckDraw(&game->deck);
+
+    int n = game->num_players;
+    game->next_player = (game->current_player + game->direction + n) % n;
 }
 
-void execute_wild_card(GameState *game)
+void execute_wild_card(GameState *game, int wild_colour)
 {
-    uint8_t chosen_colour;
-    printf("> Choose a colour, 1: Red, 2: Blue, 3: Green, 4: Yellow: ");
-    scanf("%hhu", &chosen_colour);
-    switch(chosen_colour){
-        case 1: game->played_cards[game->current_card_idx].colour = CARD_COLOUR_RED; break;
-        case 2: game->played_cards[game->current_card_idx].colour = CARD_COLOUR_BLUE; break;
-        case 3: game->played_cards[game->current_card_idx].colour = CARD_COLOUR_GREEN; break;
-        case 4: game->played_cards[game->current_card_idx].colour = CARD_COLOUR_YELLOW; break;
-        default: printf("Unknown colour picked");
+    if (wild_colour >= 1 && wild_colour <= 4) {
+        // Map 1-4 to enum 0-3 (Red=0, Blue=1, Green=2, Yellow=3)
+        game->played_cards[game->current_card_idx].colour = (cardColour)(wild_colour - 1);
+    } else {
+        // Default to Red if user didn't pick
+        game->played_cards[game->current_card_idx].colour = CARD_COLOUR_RED;
     }
 }
 
-void execute_wild_card_draw_four(GameState *game)
-{
-    execute_wild_card(game);
-    for(int i = 0; i < 4; i++)
-        game->players[game->next_player].hand_cards[game->players[game->next_player].hand_size++] = deckDraw(&game->deck);
-}
-
 // For when a player plays a power card/wild card
-void execute_card_effect(Card *c, GameState *game)
+void execute_card_effect(Card *c, GameState *game, int wild_colour)
 {
     switch (c->value)
     {
@@ -279,10 +264,14 @@ void execute_card_effect(Card *c, GameState *game)
         execute_draw_two_card(game);
         break;
     case CARD_VALUE_WILD:
-        execute_wild_card(game);
+        execute_wild_card(game, wild_colour);
         break;
     case CARD_VALUE_WILD_DRAW_FOUR:
-        execute_wild_card_draw_four(game);
+        execute_wild_card(game, wild_colour);
+        for(int i = 0; i < 4; i++) {
+            int victim = (game->current_player + game->direction + game->num_players) % game->num_players;
+            player_add_card(&game->players[victim], deckDraw(&game->deck));
+        }
         break;
     default:
         break;
@@ -290,7 +279,6 @@ void execute_card_effect(Card *c, GameState *game)
 }
 
 #endif // CARD
-
 
 // Jason
 #ifndef PLAYER
@@ -303,21 +291,23 @@ void player_init(Player *player, const char *name)
     player->hand_size = 0;                             // Cards given during start of round
 }
 
-void player_play_card(Player *player, uint8_t card_played, GameState *game)
+bool player_play_card(Player *player, uint8_t card_played, GameState *game, int wild_colour)
 {
-    while (!playable_card(&player->hand_cards[card_played], &game->played_cards[game->current_card_idx]))
+    Card *chosen_card = &player->hand_cards[card_played];
+    Card *top_card = &game->played_cards[game->current_card_idx];
+
+    if (!playable_card(chosen_card, top_card))
     {
-        printf("> Card %d is not a playable card, please pick another card", card_played);
-        int temp_input;
-        scanf("%d", &temp_input);
-        card_played = (uint8_t)temp_input;
-        player_play_card(player, card_played, game);
-        return;
+        printf("> Invalid card played! Card not playable on top of pile.\n");
+        return false;
     }
-    game->played_cards[++game->current_card_idx] = player->hand_cards[player->hand_size - 1];
+    game->played_cards[++game->current_card_idx] = *chosen_card;
+
+    player->hand_cards[card_played] = player->hand_cards[player->hand_size - 1]; // Replace played card with last card
     player->hand_size--;
-    printf("> A %d(%s) has been played!", game->played_cards[game->current_card_idx].value, get_colour_name(game->played_cards[game->current_card_idx].colour));
-    execute_card_effect(&game->played_cards[game->current_card_idx], game);
+
+    execute_card_effect(&game->played_cards[game->current_card_idx], game, wild_colour);
+    return true;
 }
 
 // For displaying the Player's hand
@@ -331,8 +321,7 @@ int player_check_hand(Player *player)
     return 0;
 }
 
-
-void player_turn(int player_index, GameState *game) {
+bool player_turn(int player_index, GameState *game) {
   Player *P = &game->players[player_index];
   char *cmd = game->stored_move;
   char msg[100];
@@ -341,33 +330,57 @@ void player_turn(int player_index, GameState *game) {
     printf("> You draw a card...");
     Card card_drawn = deckDraw(&game->deck);
     player_add_card(P, card_drawn);
-    //Sending message to game_log
-    snprintf(msg, sizeof(msg), "Player %d drew a card", player_index);
+
+    //Sending message to game.log
+    snprintf(msg, sizeof(msg), "Player %s drew a card", P->player_name);
     enqueue_log(msg);
+    return true;
   } else if (strncmp(cmd, "MOVE", 4) == 0) {
     int card_index;
-    // Get the number after cmd "MOVE"
-    if (sscanf(cmd + 5, "%d", &card_index) == 1) {
-      // Since client sends 1-based index, Server need to convert to 0-based
-      int actual_index = card_index - 1;
+    int colour_code = 0; // Default 0
+    int uno_declaration = 0;
 
-      if (actual_index >= 0 && actual_index < P->hand_size) {
-        // Send the card Details for logging
-        Card *c = &P->hand_cards[actual_index];
-        snprintf(msg, sizeof(msg), "Player %d played %d (%s)", player_index, c->value, get_colour_name(c->colour));
-        enqueue_log(msg);
+    // Get the Index and colour after cmd "MOVE"
+    if(P->hand_size == 2){
+        sscanf(cmd + 5, "%d %d", &card_index, &uno_declaration);
+    }
+    else{
+    sscanf(cmd + 5, "%d %d", &card_index, &colour_code);
+    }
 
-        player_play_card(P, actual_index, game);
+    // Since client sends 1-based index, Server need to convert to 0-based
+    int actual_index = card_index - 1;
+
+    if (actual_index >= 0 && actual_index < P->hand_size) {
+
+        bool move_successful = player_play_card(P, actual_index, game, colour_code);
+
+        if (move_successful)
+        {
+            // Send the card Details for logging
+            Card *c = &P->hand_cards[actual_index];
+            snprintf(msg, sizeof(msg), "Player %s played %d (%s)", P->player_name, c->value, get_colour_name(c->colour));
+            enqueue_log(msg);
+
+            check_for_uno(P, game, uno_declaration);
+            return true;
+        } else {
+            return false;
+        }
         
-      } else {
-        printf("Error: Player %d tried invalid index %d\n", player_index, card_index);
-        snprintf(msg, sizeof(msg), "Player %d tried invalid play index %d", player_index, card_index);
-        //PENALTY: DRAW A CARD
-        player_add_card(P, deckDraw(&game->deck));
-      }
+    
+    } else {
+    printf("Error: Player %d tried invalid index %d\n", player_index, card_index);
+    snprintf(msg, sizeof(msg), "Player %s tried invalid play index %d", P->player_name, card_index);
+    enqueue_log(msg);
+
+    //PENALTY: DRAW A CARD
+    player_add_card(P, deckDraw(&game->deck));
+
+    return false;
     }
   }
-  check_for_uno(P, game);
+  return false;
 }
 
 #endif
@@ -391,66 +404,18 @@ void format_card_to_string(Card *c, char *buffer) {
     }
 }
 
-void check_for_uno(Player *player, GameState *game)
-{   
-    char declared_uno[3];
+void check_for_uno(Player *player, GameState *game, int uno_declaration){  
     if(player->hand_size == 1){
-        printf("> You are about to win! Type 'Uno' or draw two cards: ");
-        scanf("%s", declared_uno);
-
-        if(strcmp(declared_uno, "uno") != 0){
-            printf("> Uh oh! You didn't say Uno! You'll now draw two cards!");
+        if(uno_declaration == 0){
+            printf("Uh oh! You didn't say Uno! You'll now draw two cards!");
             player->hand_cards[player->hand_size++] = deckDraw(&game->deck);
             player->hand_cards[player->hand_size++] = deckDraw(&game->deck);
         }
         else{
-            printf("> Player %d has declared uno!", game->current_player);
+            printf("Player %d has declared uno!", game->current_player);
         }
     }
 }
-
-// void gameplay(GameState *game)
-// {
-//     while (!game->winner_pid)
-//     {
-//         player_turn(&game->players[game->current_player], game);
-//         if (check_for_winner(&game->players[game->current_player]))
-//             game->game_over = 1;
-//         decide_next_player(game);
-//     }
-//     printf("{ %s WINS! }\n\n", game->players[game->winner_pid].player_name);
-// }
-
-// void game_init(GameState *game)
-// {
-//     deckInit(&game->deck);
-//     game->direction = 1;
-//     game->current_player = 0;
-//     game->current_card_idx = 0;
-//     game->next_player = game->current_player + game->direction;
-
-//     // Give out 7 cards to each player
-//     for (int i = 0; i < MAX_PLAYERS; i++)
-//     {
-//         for (int j = 0; j < 7; j++)
-//         {
-//             player_add_card(&game->players[i], deckDraw(&game->deck));
-//         }
-//     }
-
-//     // Play the starting card
-//     game->played_cards[0] = deckDraw(&game->deck);
-//     while ((game->played_cards[0].type != CARD_NUMBER_TYPE))
-//     {
-//         deckShuffle(&game->deck);
-//         game->played_cards[0] = deckDraw(&game->deck);
-//     }
-//     game->current_card_idx = 1;
-
-//     //gameplay(game);
-// }
-
-
 
 void deckInit(Deck *onoDeck)
 {
@@ -520,8 +485,6 @@ void deckInit(Deck *onoDeck)
     onoDeck->top_index = 0;
 }
 
-
-
 void deckShuffle(Deck *onoDeck)
 {
     // Random Number Generator Seed
@@ -553,33 +516,38 @@ bool check_for_winner(Player *player)
   return false;
 }
 
-
 void decide_next_player(GameState *game)
 {
-    if (game->next_player >= MAX_PLAYERS)
-    {
-        game->current_player = 0; // Wrap back to the first player.
+    int n = game->num_players;
+    int attempts = 0;
+
+    game->current_player = (game->next_player + n) % n;
+
+    while(!game->players[game->current_player].is_active && attempts < n) {
+        game->current_player = (game->current_player + game->direction + n) % n;
+        attempts++;
     }
-    else if (game->next_player < 0)
-    {
-        game->current_player = MAX_PLAYERS - 1; // Wrap back to the last player.
-    }
-    else
-    {
-        game->current_player = game->next_player;
-        game->next_player += game->direction;
+
+    game->next_player = (game->current_player + game->direction + n) % n;
+
+    attempts = 0;
+    while(!game->players[game->next_player].is_active && attempts < n) {
+        game->next_player = (game->next_player + game->direction + n) % n;
+        attempts++;
     }
 }
-
-
 
 // Pass logging mechanism
 void enqueue_log(char *msg) {
     time_t now = time(NULL);
-    struct tm *t = localtime(&now);
+
+    struct tm t;
+    localtime_r(&now, &t);
+
     char timed_msg[LOG_MSG_LEN];
 
-    int time_len = strftime(timed_msg, LOG_MSG_LEN, "[%H:%M:%S] ", t);
+    int time_len = strftime(timed_msg, LOG_MSG_LEN, "[%H:%M:%S] ", &t);
+    
     snprintf(timed_msg + time_len, LOG_MSG_LEN - time_len, "%s", msg);
 
     sem_wait(&shm->logger.space_left);
@@ -598,7 +566,7 @@ void enqueue_log(char *msg) {
 void *logger_thread_func(void *arg) {
     LogQueue *lq = (LogQueue *)arg;
 
-    FILE *fp = fopen("game_log", "a");
+    FILE *fp = fopen("game.log", "a");
     if (!fp) {
         perror("Logger failed to open file");
         pthread_exit(NULL);
@@ -640,6 +608,12 @@ void handle_disconnect(int player_index, char *player_name, int fd) {
 
     printf("Player %s disconnected. Cleaning up child process...\n", player_name);
     shm->players[player_index].is_active = 0;
+
+    pthread_mutex_lock(&shm->game_lock);
+    shm->move_ready = 1;
+    shm->player_move_index = player_index;
+    pthread_cond_broadcast(&shm->turn_cond);
+    pthread_mutex_unlock(&shm->game_lock);
     exit(0);
 }
 
@@ -674,8 +648,64 @@ void update_player_client(int player_index, int pipe_fd) {
     write(pipe_fd, msg, strlen(msg));
 }
 
+int get_card_score(Card *c) {
+    if (c->type == CARD_NUMBER_TYPE) {
+        return c->value;
+    } else if (c->type == CARD_WILD_TYPE || c->type == CARD_WILD_DRAW_FOUR_TYPE) {
+        return 50;
+    } else {
+        return 20;
+    }
+}
+
+void save_scores(GameState *game) {
+    FILE *fp = fopen("scores.txt", "a");
+    if (!fp) {
+        perror("Failed to open scores.txt");
+        return;
+    }
+
+    time_t now = time(NULL);
+    char *time_str = ctime(&now);
+    time_str[strcspn(time_str, "\n")] = '\0';
+
+    fprintf(fp, "[%s] GAME SCORES: ", time_str);
+    printf("\nSaving Final Scores:\n");
+
+    for (int i = 0; i < game->num_players; i++) {
+        Player *P = &game->players[i];
+        int total_score = 0;
+
+        for (int j = 0; j < P->hand_size; j++) {
+            total_score += get_card_score(&P->hand_cards[j]);
+        }
+
+        fprintf(fp, "%s: %d points; ", P->player_name, total_score);
+        printf(" - %s: %d points\n", P->player_name, total_score);
+    }
+
+    fprintf(fp, "\n");
+    fclose(fp);
+    printf("Scores saved to scores.txt\n");
+}
+// function to clean up child processes of disconnected players
+void reap_child_processes(Player *player) {
+    
+    pid_t check = waitpid(player->pid, NULL, WNOHANG);
+
+    if(check > 0){
+        char log_msg[LOG_MSG_LEN];
+        snprintf(log_msg, LOG_MSG_LEN, "Child %s with PID of %d has been reaped after disconnection.", player->player_name, player->pid);
+        enqueue_log(log_msg);
+        }
+    else if(check == -1){
+        perror("reaping child process failed");
+    }
+}
+        
 // Game starts
 int main() {
+    signal(SIGPIPE, SIG_IGN); // Ignore SIGPIPE to prevent crashes on broken pipes
     int num_players = 0;
     int countdown = 60;
     char player_names[5][NAME_SIZE];
@@ -869,33 +899,75 @@ int main() {
 
                 pthread_cond_wait(&shm->turn_cond, &shm->game_lock);
             }
-            //apply move changes 
-            player_turn(player, shm);            
-            shm->move_ready = 0;
 
-            //check for winner, if yes then do update 
-            if(check_for_winner(&shm->players[player])){
+            // Check if the player is still active
+            if (!shm->players[player].is_active) {
+                printf("Player %s has disconnected. Skipping their turn.\n", shm->players[player].player_name);
+                shm->move_ready = 0;
 
-            shm->game_over = true;
-            printf("The winner of the game is %s !\n", shm->players[player].player_name);
-            pthread_mutex_unlock(&shm->game_lock);// unlocks game
-            break;
-
-            }
-            else{
-
-                //updates current player for game 
                 decide_next_player(shm);
-                pthread_mutex_unlock(&shm->game_lock);// unlocks game
+
+                for(int p=0; p< shm->num_players ; p++) {
+                    if (shm->players[p].is_active) {
+                        update_player_client(p, player_pipes[p]);
+                    }
+                }
+                pthread_mutex_unlock(&shm->game_lock);
+                continue; // Skip to next iteration if player disconnected
             }
+
+            //apply move changes 
+            bool success = player_turn(player, shm);
+            shm->move_ready = 0;
             
-            enqueue_log("Server shutting down.");
+
+            if(!shm->players[player].is_active){
+                pthread_mutex_unlock(&shm->game_lock);  
+                //reap child processes if any players disconnected
+                reap_child_processes(&shm->players[player]);
+                pthread_mutex_lock(&shm->game_lock);  
+            }
+ 
+            if (success) {
+                if (check_for_winner(&shm->players[player])) {
+                    shm->game_over = true;
+
+                    for (int i = 0; i < shm->num_players; i++)
+                    {
+                        write(player_pipes[i], "GAME_OVER\n", 10);
+                    }
+                    
+                } else {
+                    decide_next_player(shm);
+
+                    for(int p=0; p< shm->num_players ; p++) {
+                        if (shm->players[p].is_active) {
+                            update_player_client(p, player_pipes[p]);
+                        }
+                    }
+                }
+            } else {
+                // Invalid move, player draws a card as penalty
+                write(player_pipes[player], "INVALID_MOVE\n", 13);
+                player_add_card(&shm->players[player], deckDraw(&shm->deck));
+                update_player_client(player, player_pipes[player]);
+            }
+            pthread_mutex_unlock(&shm->game_lock);
         }
     } else {    
         fprintf(stderr, "Number of players must be between 2 and 5.\n");
         return 1;
     }
 
+    printf("Game over! Winner PID: %d\n", shm->winner_pid);
+    save_scores(shm);
+
+    // Clean up the remaining child processes
+    for(int i = 0; i < num_players; i++){
+        reap_child_processes(&shm->players[i]);
+    }
+
+    enqueue_log("SERVER_SHUTDOWN");
     pthread_join(log_tid, NULL);
     return 0;
 }
