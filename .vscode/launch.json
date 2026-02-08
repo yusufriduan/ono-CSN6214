@@ -7,9 +7,9 @@
       "request": "launch",
       "args": [],
       "stopAtEntry": false,
-      "externalConsole": false,
-      "cwd": "/home/scandiacus/Documents/ono-CSN6214",
-      "program": "/home/scandiacus/Documents/ono-CSN6214/build/Debug/outDebug",
+      "externalConsole": true,
+      "cwd": "c:/Users/Jason/Documents/ono-CSN6214",
+      "program": "c:/Users/Jason/Documents/ono-CSN6214/build/Debug/outDebug",
       "MIMode": "gdb",
       "miDebuggerPath": "gdb",
       "setupCommands": [

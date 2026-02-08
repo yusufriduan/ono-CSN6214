@@ -726,7 +726,7 @@ int main() {
     signal(SIGINT, signal_handler); // handles server shutdown via Ctrl+C
     signal(SIGPIPE, SIG_IGN); // Ignore SIGPIPE to prevent crashes on broken pipes
     int num_players = 0;
-    int countdown = 30;
+    int countdown = 60;
     char player_names[5][NAME_SIZE];
     int client_pid_list[5];
     char raw_buffer[128];
