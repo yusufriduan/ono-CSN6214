@@ -147,6 +147,10 @@ void signal_handler(int signal){
 
     (void)signal; // avoiding parameter warning by casting to void
     server_running = 0;
+
+    if (shm) {
+        pthread_cond_broadcast(&shm->turn_cond);
+    }
 }
 
 Card deckDraw(Deck *onoDeck)
@@ -368,7 +372,7 @@ bool player_turn(int player_index, GameState *game) {
 
         if (move_successful)
         {
-            Card *c = &P->hand_cards[actual_index];
+            Card *c = &game->played_cards[game->current_card_idx];
             printf("> Player %s played card %d (%s)\n", P->player_name, c->value, get_colour_name(c->colour));
             // Send the card Details for logging
             snprintf(msg, sizeof(msg), "Player %s played %d (%s)", P->player_name, c->value, get_colour_name(c->colour));
@@ -382,7 +386,7 @@ bool player_turn(int player_index, GameState *game) {
         
     
     } else {
-    Card *c = &P->hand_cards[actual_index];
+    Card *c = &game->played_cards[game->current_card_idx];
     printf("Error: Player %s tried invalid index %d (%s)\n", P->player_name, c->value, get_colour_name(c->colour));
     //Sending message to game.log
     snprintf(msg, sizeof(msg), "Player %s tried invalid play index %d (%s)", P->player_name, c->value, get_colour_name(c->colour));
@@ -722,7 +726,7 @@ int main() {
     signal(SIGINT, signal_handler); // handles server shutdown via Ctrl+C
     signal(SIGPIPE, SIG_IGN); // Ignore SIGPIPE to prevent crashes on broken pipes
     int num_players = 0;
-    int countdown = 60;
+    int countdown = 30;
     char player_names[5][NAME_SIZE];
     int client_pid_list[5];
     char raw_buffer[128];
@@ -773,7 +777,7 @@ int main() {
 
     enqueue_log("Server started, waiting for players to join.");
 
-    for (int i = countdown; i > 0; i--) { 
+    for (int i = countdown; i > 0 && server_running ; i--) { 
         int n = read(join_fd, raw_buffer, sizeof(raw_buffer)-1);
         if (n > 0) {
             raw_buffer[n] = '\0';
@@ -910,9 +914,13 @@ int main() {
 
             pthread_mutex_lock(&shm->game_lock);
             // wait until player finished move + make sure its the same player signaling
-            while(!shm->move_ready || shm->player_move_index != player){
-
+            while((!shm->move_ready || shm->player_move_index != player) && server_running) {
                 pthread_cond_wait(&shm->turn_cond, &shm->game_lock);
+            }
+
+            if (!server_running) {
+                pthread_mutex_unlock(&shm->game_lock);
+                break;
             }
 
             // Check if the player is still active
